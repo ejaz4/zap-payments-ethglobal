@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.myapp",
+      "infoPlist": {
+        "NFCReaderUsageDescription": "This app uses NFC to read payment information from NFC tags."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -20,6 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.myapp",
       "permissions": ["android.permission.NFC"]
     },
     "web": {
@@ -41,10 +46,21 @@
         }
       ],
       [
-        "./plugins/withReactNativeHce",
+        "react-native-nfc-manager",
         {
-          "appIds": [
-            "D2760000850101"
+          "nfcPermission": "Allow $(PRODUCT_NAME) to access NFC for reading payment tags",
+          "selectIdentifiers": ["A0000000041010"],
+          "systemCodes": []
+        }
+      ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/PPMori-Medium.ttf",
+            "./assets/fonts/PPMori-Regular.ttf",
+
+            "./assets/fonts/PPMori-Semibold.ttf"
           ]
         }
       ]
