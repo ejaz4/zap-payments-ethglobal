@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 /**
  * Reverse-resolve an address to its ENS name.
  * Returns null while loading or if no ENS name is set.
+ * Debounced to avoid hammering the RPC on rapid changes.
  */
 export function useENSName(
   address: string | null | undefined,
@@ -18,11 +19,14 @@ export function useENSName(
       return;
     }
     let cancelled = false;
-    ENSService.reverseLookup(address, chainId).then((n) => {
-      if (!cancelled) setName(n);
-    });
+    const timer = setTimeout(() => {
+      ENSService.reverseLookup(address, chainId).then((n) => {
+        if (!cancelled) setName(n);
+      });
+    }, 600);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [address, chainId]);
 
@@ -180,6 +184,7 @@ export function useENSSolanaAddress(
 
 /**
  * Get the "last active" info for an address (transaction count on mainnet).
+ * Debounced to avoid slamming the RPC when many contacts render at once.
  */
 export function useLastActive(
   address: string | null | undefined,
@@ -200,15 +205,20 @@ export function useLastActive(
     let cancelled = false;
     setLoading(true);
 
-    ENSService.getLastActive(address).then((result) => {
-      if (!cancelled) {
-        setNonce(result?.nonce ?? null);
-        setLoading(false);
-      }
-    });
+    // Stagger requests so rendering a list of contacts doesn't fire all at once
+    const delay = Math.random() * 2000 + 500;
+    const timer = setTimeout(() => {
+      ENSService.getLastActive(address).then((result) => {
+        if (!cancelled) {
+          setNonce(result?.nonce ?? null);
+          setLoading(false);
+        }
+      });
+    }, delay);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [address]);
 

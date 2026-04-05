@@ -4,29 +4,29 @@
  * Uses NfcProvider context for all NFC operations
  */
 
-import { useAccentColor, tintedBackground } from "@/store/appearance";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Modal,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import Animated, {
-  Easing,
-  FadeIn,
-  SlideInDown,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
+    Easing,
+    FadeIn,
+    SlideInDown,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withSequence,
+    withTiming,
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -37,7 +37,7 @@ import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 
 export default function NfcScanScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);

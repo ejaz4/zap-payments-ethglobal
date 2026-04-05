@@ -1,7 +1,7 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { EthersClient } from "@/app/profiles/client";
 import { Button } from "@/components/ui";
 import { ZapContractService } from "@/services/zap-contract";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
 import { Ionicons } from "@expo/vector-icons";
@@ -10,13 +10,13 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -24,7 +24,7 @@ type DeploymentState = "ready" | "deploying" | "success" | "error";
 
 export default function DeployZapContractScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);

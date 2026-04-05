@@ -1,22 +1,22 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import {
-  DEFAULT_GAS_LIMITS,
-  GasSpeed,
-  TransactionType,
-  useGasStore,
+    DEFAULT_GAS_LIMITS,
+    GasSpeed,
+    TransactionType,
+    useGasStore,
 } from "@/store/gas";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -76,7 +76,7 @@ const TRANSACTION_TYPES: {
 
 export default function GasSettingsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
 
   const defaultSpeed = useGasStore((s) => s.defaultSpeed);

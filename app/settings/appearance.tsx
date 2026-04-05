@@ -1,20 +1,20 @@
 import {
-  ACCENT_PRESETS,
-  hexToRgba,
-  tintedBackground,
-  useAppearanceStore,
+    ACCENT_PRESETS,
+    hexToRgba,
+    tintedBackground,
+    useAppearanceStore,
 } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { CheckIcon } from "lucide-react-native";
 import React, { useState } from "react";
 import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -22,7 +22,7 @@ export default function AppearanceScreen() {
   const router = useRouter();
   const accentColor = useAppearanceStore((s) => s.accentColor);
   const setAccentColor = useAppearanceStore((s) => s.setAccentColor);
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const [customHex, setCustomHex] = useState(accentColor);
 
   const handleCustomSubmit = () => {

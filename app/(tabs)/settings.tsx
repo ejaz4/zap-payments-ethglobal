@@ -23,7 +23,7 @@ export default function SettingsScreen() {
   const accentColor = useAccentColor();
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const textPrimary = isLight ? "#11181C" : "#FFFFFF";
   const textSecondary = isLight ? "#64748B" : "#6B7280";
   const sectionLabel = isLight ? "#475569" : "#6B7280";

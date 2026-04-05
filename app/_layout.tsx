@@ -43,7 +43,7 @@ function useProtectedRoute() {
 function RootLayoutNav() {
   useProtectedRoute();
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
 
   return (
     <Stack
@@ -57,13 +57,17 @@ function RootLayoutNav() {
       <Stack.Screen
         name="send"
         options={{
-          presentation: "modal",
+          presentation: "transparentModal",
+          animation: "none",
+          contentStyle: { backgroundColor: "transparent" },
         }}
       />
       <Stack.Screen
         name="receive"
         options={{
-          presentation: "modal",
+          presentation: "transparentModal",
+          animation: "none",
+          contentStyle: { backgroundColor: "transparent" },
         }}
       />
       <Stack.Screen name="settings" />
@@ -76,7 +80,7 @@ export default function RootLayout() {
   const setStatus = useWalletStore((s) => s.setStatus);
   const accentColor = useAccentColor();
   const colorScheme = useColorScheme() ?? "dark";
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const surface = tintedSurface(accentColor);
 
   const baseTheme = colorScheme === "light" ? DefaultTheme : DarkTheme;

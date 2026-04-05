@@ -4,36 +4,36 @@ import { ApiProvider } from "@/crypto/provider/api";
 import { useNativePrice, useTokenPrice } from "@/hooks/use-prices";
 import { ERC20Service } from "@/services/erc20";
 import { PriceService } from "@/services/price";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedCurrency } from "@/store/currency";
 import { useProviderStore } from "@/store/provider";
 import {
-  TokenBalance,
-  getSolanaChainKey,
-  useSelectedAccount,
-  useTokenBalances,
-  useWalletStore,
+    TokenBalance,
+    getSolanaChainKey,
+    useSelectedAccount,
+    useTokenBalances,
+    useWalletStore,
 } from "@/store/wallet";
-
-const SOLANA_KEY_TO_NETWORK: Record<number, string> = {
-  [getSolanaChainKey("dynamic-mainnet")]: "dynamic-mainnet",
-  [getSolanaChainKey("dynamic-testnet")]: "dynamic-testnet",
-};
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Alert,
-  RefreshControl,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    RefreshControl,
+    ScrollView,
+    Share,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const SOLANA_KEY_TO_NETWORK: Record<number, string> = {
+  [getSolanaChainKey("dynamic-mainnet")]: "dynamic-mainnet",
+  [getSolanaChainKey("dynamic-testnet")]: "dynamic-testnet",
+};
 
 // Simple token metadata type
 interface SimpleTokenMetadata {
@@ -44,7 +44,7 @@ interface SimpleTokenMetadata {
 
 export default function TokenDetailsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const { address: tokenAddress, chainId: chainIdParam } =
     useLocalSearchParams<{ address: string; chainId?: string }>();

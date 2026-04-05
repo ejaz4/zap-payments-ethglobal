@@ -2,54 +2,65 @@
  * Zap Pay Receive Screen
  * Uses HCE (Host Card Emulation) to broadcast a payment request as NFC tag.
  * Another device running Zap Pay can tap this phone to pay the requested amount.
+ *
+ * After broadcast starts, listens for incoming on-chain transfers (ERC-20 + native
+ * balance polling) to verify payment arrived. If the sender paid in a different
+ * currency, offers an optional swap to the requested asset.
  */
 
 import { getChainName, useNfc } from "@/app/nfc/context";
 import { EthersClient } from "@/app/profiles/client";
 import {
-    NetworkSelector,
-    SOLANA_NETWORKS,
-    getNetworkMeta,
+  NetworkSelector,
+  SOLANA_NETWORKS,
+  getNetworkMeta,
 } from "@/components/ui/NetworkSelector";
 import { TokenInfo } from "@/config/tokens";
+import { NATIVE_TOKEN_ADDRESS } from "@/config/uniswap";
+import { useErc20Listener } from "@/hooks/use-erc20-listener";
 import { useTokenPrice } from "@/hooks/use-prices";
+import { useSwapExecution } from "@/hooks/use-swap-execution";
+import { useUniswapQuote } from "@/hooks/use-uniswap-quote";
 import { PriceService } from "@/services/price";
+import { BalanceService } from "@/services/wallet";
 import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedCurrency } from "@/store/currency";
 import { useProviderStore } from "@/store/provider";
 import { useTokenStore } from "@/store/tokens";
 import {
-    getSolanaChainKey,
-    useSelectedAccount,
-    useTokenBalances,
-    useWalletStore,
+  getSolanaChainKey,
+  useSelectedAccount,
+  useWalletStore,
 } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
+import { formatUnits } from "ethers";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    FlatList,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    Vibration,
-    View,
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Vibration,
+  View,
 } from "react-native";
 import Animated, {
-    Easing,
-    FadeIn,
-    FadeInDown,
-    useAnimatedStyle,
-    useSharedValue,
-    withRepeat,
-    withSequence,
-    withTiming,
+  Easing,
+  FadeIn,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -74,21 +85,34 @@ type BroadcastStatus =
   | "idle"
   | "broadcasting"
   | "tapped"
-  | "confirmed"
+  | "received"
+  | "settling"
+  | "settled"
   | "error";
 
 type SelectedAsset =
   | { type: "native" }
   | { type: "token"; token: TokenInfo };
 
+interface ReceivedPayment {
+  type: "native" | "token";
+  amount: string;
+  symbol: string;
+  tokenAddress?: string;
+  decimals?: number;
+  from?: string;
+  txHash?: string;
+}
+
+const DEFAULT_TOLERANCE = 0.05;
+
 export default function ZapPayReceiveScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);
-  const tokenBalances = useTokenBalances();
   const getTokensForChain = useTokenStore((s) => s.getTokensForChain);
   const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
   const isSolanaAccount = selectedAccount?.accountType === "solana";
@@ -116,20 +140,15 @@ export default function ZapPayReceiveScreen() {
 
   const availableTokens = useMemo(() => {
     if (isSolanaAccount) {
-      return tokenBalances.map((tb) => ({
-        address: tb.address,
-        chainId: tb.chainId,
-        decimals: tb.decimals,
-        symbol: tb.symbol,
-        name: tb.name,
-      })) as TokenInfo[];
+      const chainKey = getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet");
+      return getTokensForChain(chainKey);
     }
     return getTokensForChain(selectedChainId);
-  }, [isSolanaAccount, tokenBalances, getTokensForChain, selectedChainId]);
+  }, [isSolanaAccount, getTokensForChain, selectedChainId, selectedApiNetworkId]);
 
   const symbol = selectedAsset.type === "native" ? nativeSymbol : selectedAsset.token.symbol;
-  const tokenAddress = selectedAsset.type === "token" ? selectedAsset.token.address : undefined;
-  const { price: unitPrice } = useTokenPrice(symbol, tokenAddress, effectiveChainId);
+  const requestedTokenAddress = selectedAsset.type === "token" ? selectedAsset.token.address : undefined;
+  const { price: unitPrice } = useTokenPrice(symbol, requestedTokenAddress, effectiveChainId);
 
   const fiatAmount = useMemo(() => {
     const num = parseFloat(amount || "0");
@@ -142,20 +161,66 @@ export default function ZapPayReceiveScreen() {
   const sessionRef = useRef<any>(null);
   const cleanupListenersRef = useRef<(() => void) | null>(null);
 
-  // Disable NFC reading while this screen is active — HCE and NFC reading
-  // fight over the NFC hardware. Stop reading on focus, resume on blur/unmount.
-  useFocusEffect(
-    useCallback(() => {
-      console.log("[ZapPayReceive] Screen focused — stopping NFC reader");
-      stopListening();
-      return () => {
-        console.log("[ZapPayReceive] Screen unfocused — resuming NFC reader");
-        startListening();
-      };
-    }, []),
+  // ---------------------------------------------------------------------------
+  // Payment detection
+  // ---------------------------------------------------------------------------
+  const [receivedPayment, setReceivedPayment] = useState<ReceivedPayment | null>(null);
+  const [equivalenceStatus, setEquivalenceStatus] = useState<"checking" | "sufficient" | "insufficient" | null>(null);
+  const [receivedFiatValue, setReceivedFiatValue] = useState<string | null>(null);
+  const [requestedFiatValue, setRequestedFiatValue] = useState<string | null>(null);
+  const initialBalanceRef = useRef<bigint>(0n);
+  const balancePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ERC20 listener — active when broadcasting or tapped (EVM only)
+  const isListeningForPayments = !isSolanaAccount && (status === "broadcasting" || status === "tapped");
+  const {
+    transfer: erc20Transfer,
+    reset: resetErc20Listener,
+  } = useErc20Listener(
+    selectedAccount?.address,
+    selectedChainId,
+    isListeningForPayments,
   );
 
+  // Swap: received token → requested asset
+  const swapTokenIn = receivedPayment?.type === "token" ? receivedPayment.tokenAddress ?? "" : NATIVE_TOKEN_ADDRESS;
+  const swapTokenInDecimals = receivedPayment?.type === "token" ? (receivedPayment.decimals ?? 18) : (networkConfig?.nativeCurrency.decimals ?? 18);
+  const swapTokenOut = selectedAsset.type === "token" ? selectedAsset.token.address : NATIVE_TOKEN_ADDRESS;
+  const swapTokenOutDecimals = selectedAsset.type === "token" ? selectedAsset.token.decimals : (networkConfig?.nativeCurrency.decimals ?? 18);
+
+  const needsSwap = receivedPayment != null && !(
+    (receivedPayment.type === "native" && selectedAsset.type === "native") ||
+    (receivedPayment.type === "token" && selectedAsset.type === "token" &&
+      receivedPayment.tokenAddress?.toLowerCase() === selectedAsset.token.address.toLowerCase())
+  );
+  const swapAmount = status === "received" && needsSwap ? receivedPayment!.amount : "";
+
+  const {
+    quote: swapQuote,
+    isLoading: swapQuoteLoading,
+  } = useUniswapQuote(
+    swapTokenIn,
+    swapTokenInDecimals,
+    swapTokenOut,
+    swapTokenOutDecimals,
+    swapAmount,
+    selectedChainId,
+    selectedAccount?.address,
+    "payment",
+    "EXACT_INPUT",
+  );
+
+  const {
+    executeSwap,
+    step: swapStep,
+    txHash: swapTxHash,
+    error: swapError,
+    reset: resetSwap,
+  } = useSwapExecution();
+
+  // ---------------------------------------------------------------------------
   // Animated rings
+  // ---------------------------------------------------------------------------
   const ring1Scale = useSharedValue(1);
   const ring2Scale = useSharedValue(1);
   const ring3Scale = useSharedValue(1);
@@ -205,19 +270,174 @@ export default function ZapPayReceiveScreen() {
     }
   }, [status]);
 
-  // Stop HCE session on unmount
+  // Disable NFC reading while broadcasting
+  useFocusEffect(
+    useCallback(() => {
+      console.log("[ZapPayReceive] Screen focused — stopping NFC reader");
+      stopListening();
+      return () => {
+        console.log("[ZapPayReceive] Screen unfocused — resuming NFC reader");
+        startListening();
+      };
+    }, []),
+  );
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopBroadcasting();
+      stopBalancePolling();
     };
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // ERC20 transfer detection
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (erc20Transfer && isListeningForPayments) {
+      console.log("[ZapPayReceive] ERC20 transfer detected:", erc20Transfer.symbol, erc20Transfer.formatted);
+      setReceivedPayment({
+        type: "token",
+        amount: erc20Transfer.formatted,
+        symbol: erc20Transfer.symbol,
+        tokenAddress: erc20Transfer.token,
+        decimals: erc20Transfer.decimals,
+        from: erc20Transfer.from,
+        txHash: erc20Transfer.txHash,
+      });
+      setStatus("received");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Vibration.vibrate([0, 50, 50, 50]);
+      stopBalancePolling();
+    }
+  }, [erc20Transfer, isListeningForPayments]);
+
+  // ---------------------------------------------------------------------------
+  // Native balance polling
+  // ---------------------------------------------------------------------------
+  const startBalancePolling = useCallback(async () => {
+    if (!selectedAccount || isSolanaAccount) return; // Solana polling not supported here
+    try {
+      initialBalanceRef.current = await EthersClient.getNativeBalance(
+        selectedAccount.address,
+        selectedChainId,
+      );
+      console.log("[ZapPayReceive] Initial native balance:", formatUnits(initialBalanceRef.current, 18));
+    } catch (e) {
+      console.warn("[ZapPayReceive] Failed to get initial balance:", e);
+    }
+
+    balancePollRef.current = setInterval(async () => {
+      try {
+        const current = await EthersClient.getNativeBalance(
+          selectedAccount!.address,
+          selectedChainId,
+        );
+        if (current > initialBalanceRef.current) {
+          const increase = current - initialBalanceRef.current;
+          const decimals = networkConfig?.nativeCurrency.decimals ?? 18;
+          const formatted = formatUnits(increase, decimals);
+          console.log("[ZapPayReceive] Native balance increase:", formatted, nativeSymbol);
+          setReceivedPayment({
+            type: "native",
+            amount: formatted,
+            symbol: nativeSymbol,
+          });
+          setStatus("received");
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Vibration.vibrate([0, 50, 50, 50]);
+          stopBalancePolling();
+        }
+      } catch {
+        // Transient RPC error — keep polling
+      }
+    }, 2000);
+  }, [selectedAccount, selectedChainId, isSolanaAccount, nativeSymbol, networkConfig]);
+
+  const stopBalancePolling = useCallback(() => {
+    if (balancePollRef.current) {
+      clearInterval(balancePollRef.current);
+      balancePollRef.current = null;
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Equivalence check
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (status !== "received" || !receivedPayment) return;
+
+    const check = async () => {
+      setEquivalenceStatus("checking");
+      const requestedAmount = parseFloat(amount);
+      const receivedAmount = parseFloat(receivedPayment.amount);
+
+      // Same currency?
+      const isSameCurrency =
+        (receivedPayment.type === "native" && selectedAsset.type === "native") ||
+        (receivedPayment.type === "token" && selectedAsset.type === "token" &&
+          receivedPayment.tokenAddress?.toLowerCase() === selectedAsset.token.address.toLowerCase());
+
+      if (isSameCurrency) {
+        const sufficient = receivedAmount >= requestedAmount * (1 - DEFAULT_TOLERANCE);
+        setEquivalenceStatus(sufficient ? "sufficient" : "insufficient");
+        try {
+          const price = selectedAsset.type === "native"
+            ? await PriceService.getNativePrice(selectedChainId, "usd")
+            : await PriceService.getPriceBySymbol(symbol, "usd");
+          if (price) {
+            setReceivedFiatValue(`$${(receivedAmount * price).toFixed(2)}`);
+            setRequestedFiatValue(`$${(requestedAmount * price).toFixed(2)}`);
+          }
+        } catch {}
+        return;
+      }
+
+      // Different currency — compare via USD prices
+      try {
+        const requestedPrice = selectedAsset.type === "native"
+          ? await PriceService.getNativePrice(selectedChainId, "usd")
+          : await PriceService.getPriceBySymbol(symbol, "usd");
+
+        const receivedPrice = receivedPayment.type === "native"
+          ? await PriceService.getNativePrice(selectedChainId, "usd")
+          : await PriceService.getPriceBySymbol(receivedPayment.symbol, "usd");
+
+        if (requestedPrice && receivedPrice) {
+          const requestedUsd = requestedAmount * requestedPrice;
+          const receivedUsd = receivedAmount * receivedPrice;
+          setRequestedFiatValue(`$${requestedUsd.toFixed(2)}`);
+          setReceivedFiatValue(`$${receivedUsd.toFixed(2)}`);
+          const sufficient = receivedUsd >= requestedUsd * (1 - DEFAULT_TOLERANCE);
+          setEquivalenceStatus(sufficient ? "sufficient" : "insufficient");
+        } else {
+          setEquivalenceStatus("sufficient");
+        }
+      } catch {
+        setEquivalenceStatus("sufficient");
+      }
+    };
+
+    check();
+  }, [status, receivedPayment, amount, selectedAsset, selectedChainId, symbol]);
+
+  // Swap done
+  useEffect(() => {
+    if (swapStep === "done") {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      BalanceService.forceRefreshBalances();
+      setStatus("settled");
+    }
+  }, [swapStep]);
+
+  // ---------------------------------------------------------------------------
+  // HCE broadcasting
+  // ---------------------------------------------------------------------------
   const stopBroadcasting = async () => {
     console.log("[ZapPayReceive] stopBroadcasting called");
     try {
       cleanupListenersRef.current?.();
       cleanupListenersRef.current = null;
-
       if (sessionRef.current) {
         await sessionRef.current.setEnabled(false);
         console.log("[ZapPayReceive] HCE session disabled");
@@ -243,11 +463,7 @@ export default function ZapPayReceiveScreen() {
   };
 
   const startBroadcasting = async () => {
-    if (!selectedAccount) {
-      console.warn("[ZapPayReceive] No selected account");
-      return;
-    }
-
+    if (!selectedAccount) return;
     if (!validateAmount(amount)) return;
 
     if (Platform.OS !== "android") {
@@ -257,8 +473,7 @@ export default function ZapPayReceiveScreen() {
     }
 
     if (!HCESession || !NFCTagType4 || !NFCTagType4NDEFContentType) {
-      const msg =
-        "react-native-hce native module not found. Run: expo prebuild && expo run:android";
+      const msg = "react-native-hce native module not found. Run: expo prebuild && expo run:android";
       console.error("[ZapPayReceive]", msg);
       setErrorMessage(msg);
       setStatus("error");
@@ -266,8 +481,6 @@ export default function ZapPayReceiveScreen() {
     }
 
     try {
-      // Build the payment payload — same JSON format the NFC reader expects,
-      // extended with type and amount so the sender's transfer screen pre-fills.
       const payload = JSON.stringify({
         chainId: effectiveChainId,
         address: selectedAccount.address,
@@ -280,29 +493,18 @@ export default function ZapPayReceiveScreen() {
         tokenDecimals: selectedAsset.type === "token" ? selectedAsset.token.decimals : undefined,
       });
 
-      console.log("[ZapPayReceive] Starting HCE session...");
-      console.log("[ZapPayReceive] Chain ID:", effectiveChainId);
-      console.log("[ZapPayReceive] Network:", payloadNetwork);
-      console.log("[ZapPayReceive] Address:", selectedAccount.address);
-      console.log("[ZapPayReceive] Amount:", amount, symbol);
-      if (selectedAsset.type === "token") {
-        console.log("[ZapPayReceive] Token:", selectedAsset.token.symbol, selectedAsset.token.address);
-      }
-      console.log("[ZapPayReceive] Full payload:", payload);
+      console.log("[ZapPayReceive] Starting HCE — amount:", amount, symbol);
+      console.log("[ZapPayReceive] Payload:", payload);
 
       const tag = new NFCTagType4({
         type: NFCTagType4NDEFContentType.Text,
         content: payload,
-        writable: true, // allow sender to write tx hash back as confirmation
+        writable: true,
       });
-      console.log("[ZapPayReceive] NFCTagType4 created");
 
       const session = await HCESession.getInstance();
       sessionRef.current = session;
-      console.log("[ZapPayReceive] HCESession instance obtained:", session);
-
       await session.setApplication(tag);
-      console.log("[ZapPayReceive] Application set on session");
 
       const cleanupRead = session.on(
         HCESession.Events.HCE_STATE_READ,
@@ -312,52 +514,45 @@ export default function ZapPayReceiveScreen() {
           setStatus("tapped");
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Vibration.vibrate(50);
-          // Return to broadcasting after brief feedback
-          setTimeout(() => setStatus("broadcasting"), 2000);
+          // Stay in tapped state until payment detected (don't revert to broadcasting)
         },
       );
 
       const cleanupWrite = session.on(
         HCESession.Events.HCE_STATE_WRITE,
         () => {
-          const written = sessionRef.current?.application?.content;
-          console.log(
-            "[ZapPayReceive] HCE_STATE_WRITE — sender wrote back:",
-            written,
-          );
-          setStatus("confirmed");
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          Vibration.vibrate([0, 50, 50, 50]);
+          console.log("[ZapPayReceive] HCE_STATE_WRITE — sender wrote back");
         },
       );
 
       cleanupListenersRef.current = () => {
-        console.log("[ZapPayReceive] Cleaning up HCE event listeners");
         cleanupRead();
         cleanupWrite();
       };
 
       await session.setEnabled(true);
-      console.log("[ZapPayReceive] HCE session ENABLED — broadcasting started");
+      console.log("[ZapPayReceive] HCE ENABLED — broadcasting");
       setStatus("broadcasting");
       setErrorMessage(null);
+
+      // Start listening for on-chain payments
+      startBalancePolling();
     } catch (err: any) {
-      console.error("[ZapPayReceive] Failed to start HCE session:", err);
-      console.error("[ZapPayReceive] Error name:", err?.name);
-      console.error("[ZapPayReceive] Error message:", err?.message);
-      console.error("[ZapPayReceive] Error stack:", err?.stack);
-      const msg =
-        err?.message ||
-        "Failed to start NFC broadcasting. Ensure NFC is enabled and the app was built with expo prebuild.";
-      setErrorMessage(msg);
+      console.error("[ZapPayReceive] Failed to start HCE:", err);
+      setErrorMessage(err?.message ?? "Failed to start NFC broadcasting.");
       setStatus("error");
     }
   };
 
   const handleStop = async () => {
     await stopBroadcasting();
+    stopBalancePolling();
     setStatus("idle");
     setTapCount(0);
+    setReceivedPayment(null);
+    setEquivalenceStatus(null);
+    resetErc20Listener();
+    resetSwap();
   };
 
   const handleStart = () => {
@@ -365,69 +560,93 @@ export default function ZapPayReceiveScreen() {
     startBroadcasting();
   };
 
+  const handleDone = async () => {
+    await stopBroadcasting();
+    stopBalancePolling();
+    router.back();
+  };
+
+  const handleSwap = () => {
+    if (!swapQuote || !selectedAccount) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setStatus("settling");
+    executeSwap(swapQuote, selectedAccount.address);
+  };
+
   const formatAddress = (addr: string) =>
     `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 
-  const isBroadcasting =
-    status === "broadcasting" || status === "tapped" || status === "confirmed";
+  const isBroadcasting = status === "broadcasting" || status === "tapped";
+  const isPaymentDone = status === "received" || status === "settling" || status === "settled";
+  const isSwapping = ["checking-approval", "approving", "signing-permit", "building-swap", "swapping"].includes(swapStep);
 
+  // ---------------------------------------------------------------------------
+  // Status helpers
+  // ---------------------------------------------------------------------------
   const getStatusColor = () => {
     switch (status) {
-      case "broadcasting":
-        return "#10B981";
-      case "tapped":
-        return accentColor;
-      case "confirmed":
-        return "#10B981";
-      case "error":
-        return "#EF4444";
-      default:
-        return "#6B7280";
+      case "broadcasting": return "#10B981";
+      case "tapped": return accentColor;
+      case "received":
+        return equivalenceStatus === "sufficient" ? "#10B981" :
+               equivalenceStatus === "insufficient" ? "#F59E0B" : accentColor;
+      case "settling": return accentColor;
+      case "settled": return "#10B981";
+      case "error": return "#EF4444";
+      default: return "#6B7280";
     }
   };
 
   const getStatusIcon = (): keyof typeof Ionicons.glyphMap => {
     switch (status) {
-      case "broadcasting":
-        return "radio-outline";
-      case "tapped":
-        return "phone-portrait-outline";
-      case "confirmed":
-        return "checkmark-circle-outline";
-      case "error":
-        return "alert-circle-outline";
-      default:
-        return "radio-outline";
+      case "broadcasting": return "radio-outline";
+      case "tapped": return "phone-portrait-outline";
+      case "received": return equivalenceStatus === "sufficient" ? "checkmark-circle" : "time-outline";
+      case "settling": return "swap-horizontal-outline";
+      case "settled": return "checkmark-circle";
+      case "error": return "alert-circle-outline";
+      default: return "radio-outline";
     }
   };
 
   const getStatusMessage = () => {
     switch (status) {
-      case "broadcasting":
-        return "Broadcasting...";
-      case "tapped":
-        return "Tap detected!";
-      case "confirmed":
-        return "Payment confirmed!";
-      case "error":
-        return "Error";
-      default:
-        return "Ready to receive";
+      case "broadcasting": return "Broadcasting...";
+      case "tapped": return "Tap detected!";
+      case "received":
+        if (equivalenceStatus === "checking") return "Verifying amount...";
+        if (equivalenceStatus === "sufficient") return "Payment received!";
+        if (equivalenceStatus === "insufficient") return "Amount may be low";
+        return "Payment received";
+      case "settling": return `Swapping to ${symbol}...`;
+      case "settled": return "Payment settled!";
+      case "error": return "Error";
+      default: return "Ready to receive";
     }
   };
 
   const getStatusSubtext = () => {
     switch (status) {
-      case "broadcasting":
-        return `Waiting for a tap — requesting ${amount} ${symbol}`;
-      case "tapped":
-        return "Someone read your Zap Pay tag";
-      case "confirmed":
-        return "The sender wrote back a transaction confirmation";
-      case "error":
-        return errorMessage ?? "Something went wrong";
-      default:
-        return `Enter the ${symbol} amount you want to request, then tap Start`;
+      case "broadcasting": return `Waiting for a tap — requesting ${amount} ${symbol}`;
+      case "tapped": return "Waiting for transaction...";
+      case "received":
+        if (receivedPayment) {
+          const recv = `${parseFloat(parseFloat(receivedPayment.amount).toFixed(6))} ${receivedPayment.symbol}`;
+          if (equivalenceStatus === "sufficient") {
+            return receivedPayment.type === "native" && selectedAsset.type === "native"
+              ? `Received ${recv} — exact match`
+              : `Received ${recv}${receivedFiatValue ? ` (${receivedFiatValue})` : ""}`;
+          }
+          if (equivalenceStatus === "insufficient") {
+            return `Received ${recv} — expected ≈ ${amount} ${symbol}`;
+          }
+          return `Received ${recv}`;
+        }
+        return "Verifying...";
+      case "settling": return `Converting ${receivedPayment?.symbol ?? "?"} → ${symbol}`;
+      case "settled": return swapTxHash ? `Settled in ${symbol}` : "Payment complete";
+      case "error": return errorMessage ?? "Something went wrong";
+      default: return `Enter the ${symbol} amount you want to request, then tap Start`;
     }
   };
 
@@ -442,133 +661,114 @@ export default function ZapPayReceiveScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Zap Pay</Text>
-        <View style={{ width: 24 }} />
-      </View>
+    <LinearGradient
+      colors={
+        isBroadcasting
+          ? [accentColor, "#000000"]
+          : [bg, bg]
+      }
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={[styles.container, { backgroundColor: !isBroadcasting ? bg : undefined }]}
+    >
+      <SafeAreaView style={styles.container}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} disabled={status === "settling"}>
+            <Ionicons name="arrow-back" size={24} color={status === "settling" ? "#374151" : "#FFFFFF"} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Zap Pay</Text>
+          <View style={{ width: 24 }} />
+        </View>
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior="padding"
-      >
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Network selector */}
-          <Animated.View entering={FadeIn.delay(100)}>
-            <TouchableOpacity
-              style={styles.chainSelector}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setShowChainPicker(true);
-              }}
-              activeOpacity={0.7}
-            >
-              <View style={styles.chainSelectorLeft}>
-                <Text style={styles.chainSelectorIcon}>
-                  {isSolanaAccount ? "☀️" : getNetworkMeta(selectedChainId).icon}
-                </Text>
-                <View>
-                  <Text style={styles.chainSelectorLabel}>Network</Text>
-                  <Text style={styles.chainSelectorName}>
-                    {isSolanaAccount
-                      ? solanaNetworkName
-                      : (networkConfig?.name ?? getChainName(selectedChainId))}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.chainSelectorRight}>
-                <Text style={styles.chainSelectorCurrency}>{symbol}</Text>
-                <Ionicons name="chevron-down" size={18} color="#6B7280" />
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
+          {/* Network & asset selectors — only when idle */}
+          {!isBroadcasting && !isPaymentDone && (
+            <>
+              <Animated.View entering={FadeIn.delay(100)}>
+                <TouchableOpacity
+                  style={styles.chainSelector}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowChainPicker(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.chainSelectorLeft}>
+                    <Text style={styles.chainSelectorIcon}>
+                      {isSolanaAccount ? "☀️" : getNetworkMeta(selectedChainId).icon}
+                    </Text>
+                    <View>
+                      <Text style={styles.chainSelectorLabel}>Network</Text>
+                      <Text style={styles.chainSelectorName}>
+                        {isSolanaAccount
+                          ? solanaNetworkName
+                          : (networkConfig?.name ?? getChainName(selectedChainId))}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.chainSelectorRight}>
+                    <Text style={styles.chainSelectorCurrency}>{symbol}</Text>
+                    <Ionicons name="chevron-down" size={18} color="#6B7280" />
+                  </View>
+                </TouchableOpacity>
+              </Animated.View>
 
-          {/* Asset selector */}
-          <Animated.View entering={FadeIn.delay(120)}>
-            <TouchableOpacity
-              style={styles.chainSelector}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setShowAssetPicker(true);
-              }}
-              activeOpacity={0.7}
-            >
-              <View style={styles.chainSelectorLeft}>
-                <View style={styles.assetDot}>
-                  <Text style={styles.assetDotText}>{symbol.slice(0, 2)}</Text>
-                </View>
-                <View>
-                  <Text style={styles.chainSelectorLabel}>Asset</Text>
-                  <Text style={styles.chainSelectorName}>
-                    {selectedAsset.type === "native" ? `${symbol} (Native)` : selectedAsset.token.name}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.chainSelectorRight}>
-                <Text style={styles.chainSelectorCurrency}>{symbol}</Text>
-                <Ionicons name="chevron-down" size={18} color="#6B7280" />
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
+              <Animated.View entering={FadeIn.delay(120)}>
+                <TouchableOpacity
+                  style={styles.chainSelector}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setShowAssetPicker(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.chainSelectorLeft}>
+                    <View style={styles.assetDot}>
+                      <Text style={styles.assetDotText}>{symbol.slice(0, 2)}</Text>
+                    </View>
+                    <View>
+                      <Text style={styles.chainSelectorLabel}>Asset</Text>
+                      <Text style={styles.chainSelectorName}>
+                        {selectedAsset.type === "native" ? `${symbol} (Native)` : selectedAsset.token.name}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.chainSelectorRight}>
+                    <Text style={styles.chainSelectorCurrency}>{symbol}</Text>
+                    <Ionicons name="chevron-down" size={18} color="#6B7280" />
+                  </View>
+                </TouchableOpacity>
+              </Animated.View>
+            </>
+          )}
 
-          {/* Animated broadcast indicator */}
-          <View style={styles.scannerContainer}>
-            {(status === "broadcasting" || status === "tapped") && (
-              <>
-                <Animated.View
-                  style={[
-                    styles.ring,
-                    { borderColor: getStatusColor() },
-                    ring1Style,
-                  ]}
-                />
-                <Animated.View
-                  style={[
-                    styles.ring,
-                    { borderColor: getStatusColor() },
-                    ring2Style,
-                  ]}
-                />
-                <Animated.View
-                  style={[
-                    styles.ring,
-                    { borderColor: getStatusColor() },
-                    ring3Style,
-                  ]}
-                />
-              </>
-            )}
+          {/* Broadcast indicator */}
+          {!isPaymentDone && (
+            <View style={{ height: 120 }} />
+          )}
 
-            <Animated.View
-              entering={FadeIn.duration(300)}
-              style={[styles.iconContainer, { borderColor: getStatusColor() }]}
-            >
-              <Ionicons
-                name={getStatusIcon()}
-                size={72}
-                color={getStatusColor()}
-              />
+          {/* Success icon for received/settled */}
+          {isPaymentDone && (
+            <Animated.View entering={FadeIn.duration(250)} style={styles.successArea}>
+              <View style={[styles.successCircle, { borderColor: getStatusColor() }]}>
+                <Ionicons name={getStatusIcon()} size={56} color={getStatusColor()} />
+              </View>
             </Animated.View>
-          </View>
+          )}
 
           {/* Status text */}
-          <Animated.View
-            entering={FadeInDown.delay(150)}
-            style={styles.statusArea}
-          >
+          <Animated.View entering={FadeInDown.delay(150)} style={styles.statusArea}>
             <Text style={[styles.statusText, { color: getStatusColor() }]}>
               {getStatusMessage()}
             </Text>
             <Text style={styles.statusSubtext}>{getStatusSubtext()}</Text>
 
-            {tapCount > 0 && status !== "confirmed" && (
+            {tapCount > 0 && isBroadcasting && (
               <View style={[styles.tapBadge, { backgroundColor: accentColor + "20" }]}>
                 <Ionicons name="radio" size={14} color={accentColor} />
                 <Text style={[styles.tapBadgeText, { color: accentColor }]}>
@@ -578,19 +778,123 @@ export default function ZapPayReceiveScreen() {
             )}
           </Animated.View>
 
-          {/* Amount input — only shown when not yet broadcasting */}
-          {!isBroadcasting && (
-            <Animated.View
-              entering={FadeInDown.delay(200)}
-              style={styles.amountCard}
-            >
-              <Text style={styles.amountLabel}>Amount to request ({symbol})</Text>
-              <View
-                style={[
-                  styles.amountInputRow,
-                  amountError ? styles.amountInputRowError : null,
-                ]}
+          {/* Received payment details */}
+          {receivedPayment && isPaymentDone && (
+            <Animated.View entering={FadeInDown.delay(100)} style={styles.receivedCard}>
+              <Text style={styles.receivedTitle}>Payment Details</Text>
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Received</Text>
+                <Text style={[styles.detailValue, { color: "#10B981", fontWeight: "700" }]}>
+                  {parseFloat(parseFloat(receivedPayment.amount).toFixed(6))} {receivedPayment.symbol}
+                </Text>
+              </View>
+
+              {receivedFiatValue && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Value</Text>
+                  <Text style={styles.detailValue}>{receivedFiatValue}</Text>
+                </View>
+              )}
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Requested</Text>
+                <Text style={styles.detailValue}>
+                  {amount} {symbol} {requestedFiatValue ? `(${requestedFiatValue})` : ""}
+                </Text>
+              </View>
+
+              {equivalenceStatus && equivalenceStatus !== "checking" && (
+                <View style={[
+                  styles.equivBadge,
+                  equivalenceStatus === "sufficient" && { backgroundColor: "#10B98115", borderColor: "#10B98130" },
+                  equivalenceStatus === "insufficient" && { backgroundColor: "#F59E0B15", borderColor: "#F59E0B30" },
+                ]}>
+                  <Ionicons
+                    name={equivalenceStatus === "sufficient" ? "checkmark-circle" : "warning"}
+                    size={14}
+                    color={equivalenceStatus === "sufficient" ? "#10B981" : "#F59E0B"}
+                  />
+                  <Text style={{
+                    color: equivalenceStatus === "sufficient" ? "#10B981" : "#F59E0B",
+                    fontSize: 13,
+                    fontWeight: "600",
+                  }}>
+                    {equivalenceStatus === "sufficient" ? "Amount verified" : "Below expected — review"}
+                  </Text>
+                </View>
+              )}
+
+              {receivedPayment.from && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>From</Text>
+                  <Text style={styles.detailValueMono}>
+                    {receivedPayment.from.slice(0, 10)}...{receivedPayment.from.slice(-6)}
+                  </Text>
+                </View>
+              )}
+            </Animated.View>
+          )}
+
+          {/* Swap section */}
+          {needsSwap && status === "received" && equivalenceStatus === "sufficient" && receivedPayment && (
+            <Animated.View entering={FadeInDown.delay(200)} style={styles.swapCard}>
+              <Text style={styles.swapTitle}>Convert to {symbol}</Text>
+              <Text style={styles.swapDesc}>
+                Swap received {receivedPayment.type === "native" ? nativeSymbol : receivedPayment.symbol} into {symbol}
+              </Text>
+
+              {swapQuoteLoading && (
+                <View style={styles.quoteRow}>
+                  <ActivityIndicator size="small" color={accentColor} />
+                  <Text style={styles.quoteText}>Getting swap quote...</Text>
+                </View>
+              )}
+
+              {swapQuote && (
+                <View style={styles.quoteBox}>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Swap</Text>
+                    <Text style={styles.detailValue}>
+                      {parseFloat(parseFloat(receivedPayment.amount).toFixed(6))} {receivedPayment.symbol} → {swapQuote.formattedOut} {symbol}
+                    </Text>
+                  </View>
+                  {swapQuote.gasFeeUSD && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Gas</Text>
+                      <Text style={styles.detailValue}>${parseFloat(swapQuote.gasFeeUSD).toFixed(4)}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={[styles.swapBtn, { backgroundColor: swapQuote && !isSwapping ? accentColor : "#374151" }]}
+                onPress={handleSwap}
+                disabled={!swapQuote || isSwapping}
               >
+                <Ionicons name="swap-horizontal" size={18} color="#FFF" />
+                <Text style={styles.swapBtnText}>
+                  {isSwapping ? `${swapStep}...` : `Swap to ${symbol}`}
+                </Text>
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+
+          {status === "settling" && (
+            <View style={styles.settlingRow}>
+              <ActivityIndicator size="small" color={accentColor} />
+              <Text style={styles.settlingText}>{swapStep}...</Text>
+            </View>
+          )}
+
+          {swapError && <Text style={styles.errorText}>{swapError}</Text>}
+
+          {/* Amount input — only when idle */}
+          {!isBroadcasting && !isPaymentDone && (
+            <Animated.View entering={FadeInDown.delay(200)} style={styles.amountCard}>
+              <Text style={styles.amountLabel}>Amount to request ({symbol})</Text>
+              <View style={[styles.amountInputRow, amountError ? styles.amountInputRowError : null]}>
                 <Text style={styles.amountSymbol}>{symbol}</Text>
                 <TextInput
                   style={styles.amountInput}
@@ -604,7 +908,6 @@ export default function ZapPayReceiveScreen() {
                   placeholderTextColor="#4B5563"
                   keyboardType="decimal-pad"
                   returnKeyType="done"
-                  editable={!isBroadcasting}
                 />
               </View>
               {amountError ? (
@@ -616,40 +919,43 @@ export default function ZapPayReceiveScreen() {
           )}
 
           {/* Wallet info card */}
-          <Animated.View
-            entering={FadeInDown.delay(250)}
-            style={styles.infoCard}
-          >
-            <View style={styles.infoRow}>
-              <Ionicons name="wallet-outline" size={16} color="#9CA3AF" />
-              <Text style={styles.infoLabel}>Receiving address</Text>
-            </View>
-            <Text style={styles.infoAddress}>
-              {formatAddress(selectedAccount.address)}
-            </Text>
-            <Text style={styles.infoNetwork}>
-              on {networkConfig?.name ?? "Ethereum"}
-            </Text>
-
-            {Platform.OS !== "android" && (
-              <View style={styles.warningRow}>
-                <Ionicons name="warning-outline" size={14} color="#F59E0B" />
-                <Text style={styles.warningText}>
-                  NFC broadcasting requires Android
-                </Text>
+          {!isPaymentDone && (
+            <Animated.View entering={FadeInDown.delay(250)} style={styles.infoCard}>
+              <View style={styles.infoRow}>
+                <Ionicons name="wallet-outline" size={16} color="#9CA3AF" />
+                <Text style={styles.infoLabel}>Receiving address</Text>
               </View>
-            )}
-          </Animated.View>
+              <Text style={styles.infoAddress}>
+                {formatAddress(selectedAccount.address)}
+              </Text>
+              <Text style={styles.infoNetwork}>
+                on {isSolanaAccount ? solanaNetworkName : (networkConfig?.name ?? "Ethereum")}
+              </Text>
+
+              {Platform.OS !== "android" && (
+                <View style={styles.warningRow}>
+                  <Ionicons name="warning-outline" size={14} color="#F59E0B" />
+                  <Text style={styles.warningText}>
+                    NFC broadcasting requires Android
+                  </Text>
+                </View>
+              )}
+            </Animated.View>
+          )}
         </ScrollView>
 
-        {/* Action button — pinned to bottom */}
+        {/* Action button */}
         <Animated.View entering={FadeInDown.delay(300)} style={styles.footer}>
-          {!isBroadcasting ? (
+          {isPaymentDone && (status === "received" || status === "settled") ? (
+            <TouchableOpacity style={styles.primaryButton} onPress={handleDone}>
+              <Ionicons name="checkmark" size={20} color="#FFFFFF" />
+              <Text style={styles.primaryButtonText}>Done</Text>
+            </TouchableOpacity>
+          ) : !isBroadcasting && !isPaymentDone ? (
             <TouchableOpacity
               style={[
                 styles.primaryButton,
-                (Platform.OS !== "android" || !amount.trim()) &&
-                  styles.primaryButtonDisabled,
+                (Platform.OS !== "android" || !amount.trim()) && styles.primaryButtonDisabled,
               ]}
               onPress={handleStart}
               disabled={Platform.OS !== "android"}
@@ -657,12 +963,12 @@ export default function ZapPayReceiveScreen() {
               <Ionicons name="radio" size={20} color="#FFFFFF" />
               <Text style={styles.primaryButtonText}>Start Broadcasting</Text>
             </TouchableOpacity>
-          ) : (
+          ) : isBroadcasting ? (
             <TouchableOpacity style={styles.stopButton} onPress={handleStop}>
               <Ionicons name="stop-circle-outline" size={20} color="#FFFFFF" />
               <Text style={styles.stopButtonText}>Stop Broadcasting</Text>
             </TouchableOpacity>
-          )}
+          ) : null}
         </Animated.View>
       </KeyboardAvoidingView>
 
@@ -734,21 +1040,15 @@ export default function ZapPayReceiveScreen() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0F1512",
-  },
-  flex: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 16,
-  },
+  container: { flex: 1, backgroundColor: "#0F1512" },
+  flex: { flex: 1 },
+  scrollContent: { paddingBottom: 16 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -757,11 +1057,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#1E2E29",
   },
-  headerTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "600",
-  },
+  headerTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "600" },
   chainSelector: {
     flexDirection: "row",
     alignItems: "center",
@@ -773,14 +1069,8 @@ const styles = StyleSheet.create({
     marginTop: 16,
     borderRadius: 14,
   },
-  chainSelectorLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  chainSelectorIcon: {
-    fontSize: 18,
-  },
+  chainSelectorLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  chainSelectorIcon: { fontSize: 18 },
   chainSelectorLabel: {
     color: "#9CA3AF",
     fontSize: 12,
@@ -788,294 +1078,172 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 2,
   },
-  chainSelectorName: {
-    fontSize: 14,
-    color: "#FFFFFF",
-    fontWeight: "600",
-  },
-  chainSelectorRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  chainSelectorCurrency: {
-    color: "#D1D5DB",
-    fontSize: 13,
-    fontWeight: "600",
-  },
+  chainSelectorName: { fontSize: 14, color: "#FFFFFF", fontWeight: "600" },
+  chainSelectorRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  chainSelectorCurrency: { color: "#D1D5DB", fontSize: 13, fontWeight: "600" },
   assetDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 28, height: 28, borderRadius: 14,
     backgroundColor: "#111827",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "center", justifyContent: "center",
   },
-  assetDotText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "700",
-  },
+  assetDotText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
   scannerContainer: {
-    width: 220,
-    height: 220,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 220, height: 220,
+    alignItems: "center", justifyContent: "center",
     alignSelf: "center",
-    marginTop: 24,
-    marginBottom: 32,
+    marginTop: 24, marginBottom: 32,
   },
   ring: {
     position: "absolute",
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    borderWidth: 2,
+    width: 180, height: 180,
+    borderRadius: 90, borderWidth: 2,
   },
   iconContainer: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 130, height: 130, borderRadius: 65,
     backgroundColor: "#1E2E29",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 3,
+  },
+  successArea: {
+    alignItems: "center", justifyContent: "center",
+    marginTop: 24, marginBottom: 16,
+  },
+  successCircle: {
+    width: 100, height: 100, borderRadius: 50,
+    backgroundColor: "#1E2E29",
+    alignItems: "center", justifyContent: "center",
     borderWidth: 3,
   },
   statusArea: {
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 32,
-    marginBottom: 24,
+    alignItems: "center", gap: 10,
+    paddingHorizontal: 32, marginBottom: 24,
   },
-  statusText: {
-    fontSize: 22,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  statusSubtext: {
-    fontSize: 15,
-    color: "#9CA3AF",
-    textAlign: "center",
-    lineHeight: 22,
-  },
+  statusText: { fontSize: 22, fontWeight: "700", textAlign: "center" },
+  statusSubtext: { fontSize: 15, color: "#9CA3AF", textAlign: "center", lineHeight: 22 },
   tapBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+    flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#569F8C20",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    marginTop: 4,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: 12, marginTop: 4,
   },
-  tapBadgeText: {
-    color: "#569F8C",
-    fontSize: 13,
-    fontWeight: "600",
+  tapBadgeText: { color: "#569F8C", fontSize: 13, fontWeight: "600" },
+  // Received payment card
+  receivedCard: {
+    backgroundColor: "#1E2E29", borderRadius: 16,
+    padding: 16, marginHorizontal: 24, marginBottom: 12,
+    gap: 10, borderWidth: 1, borderColor: "#10B98130",
   },
-  amountCard: {
-    backgroundColor: "#1E2E29",
-    borderRadius: 16,
-    padding: 16,
-    marginHorizontal: 24,
-    marginBottom: 16,
-    gap: 10,
-  },
-  amountLabel: {
-    color: "#9CA3AF",
-    fontSize: 12,
-    fontWeight: "500",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  amountInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#0F1512",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: "#374151",
-    gap: 8,
-  },
-  amountInputRowError: {
-    borderColor: "#EF4444",
-  },
-  amountSymbol: {
-    color: "#9CA3AF",
-    fontSize: 16,
-    fontWeight: "600",
-    minWidth: 40,
-  },
-  amountInput: {
-    flex: 1,
-    color: "#FFFFFF",
-    fontSize: 24,
-    fontWeight: "700",
-    paddingVertical: 12,
-  },
-  amountErrorText: {
-    color: "#EF4444",
-    fontSize: 13,
-    marginTop: -4,
-  },
-  amountFiatEquiv: {
-    color: "#9CA3AF",
-    fontSize: 13,
-    marginTop: 4,
-    textAlign: "center",
-  },
-  infoCard: {
-    backgroundColor: "#1E2E29",
-    borderRadius: 16,
-    padding: 16,
-    marginHorizontal: 24,
-    marginBottom: 16,
-    gap: 4,
-  },
-  infoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 6,
-  },
-  infoLabel: {
-    color: "#9CA3AF",
-    fontSize: 12,
-    fontWeight: "500",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  infoAddress: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
-    fontFamily: "monospace",
-  },
-  infoNetwork: {
-    color: "#6B7280",
-    fontSize: 13,
-  },
-  warningRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#374151",
-  },
-  warningText: {
-    color: "#F59E0B",
-    fontSize: 13,
-  },
-  footer: {
-    padding: 24,
-    paddingTop: 8,
-  },
-  primaryButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#10B981",
-    borderRadius: 14,
-    paddingVertical: 16,
-    gap: 10,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.5,
-  },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "700",
-  },
-  stopButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#374151",
-    borderRadius: 14,
-    paddingVertical: 16,
-    gap: 10,
-  },
-  stopButtonText: {
-    color: "#FFFFFF",
-    fontSize: 17,
-    fontWeight: "600",
-  },
-  emptyContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyText: {
-    color: "#6B7280",
-    fontSize: 16,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  modalContent: {
-    backgroundColor: "#0F1512",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: "75%",
-    paddingBottom: 24,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E2E29",
-  },
-  modalTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  assetItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E2E29",
-  },
-  assetItemSelected: {
-    backgroundColor: "#1A2520",
-  },
-  assetItemIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#1F2937",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  assetItemIconText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  assetItemInfo: {
-    flex: 1,
-  },
-  assetItemSymbol: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  assetItemName: {
-    color: "#9CA3AF",
-    fontSize: 13,
+  receivedTitle: { color: "#FFFFFF", fontSize: 14, fontWeight: "700", marginBottom: 2 },
+  detailRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  detailLabel: { color: "#9CA3AF", fontSize: 12 },
+  detailValue: { color: "#E5E7EB", fontSize: 12, fontWeight: "600" },
+  detailValueMono: { color: "#E5E7EB", fontSize: 11, fontFamily: "monospace" },
+  equivBadge: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: "#37415130", backgroundColor: "#37415120",
     marginTop: 2,
   },
+  // Swap section
+  swapCard: {
+    backgroundColor: "#1E2E29", borderRadius: 16,
+    padding: 16, marginHorizontal: 24, marginBottom: 12, gap: 10,
+  },
+  swapTitle: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+  swapDesc: { color: "#9CA3AF", fontSize: 12 },
+  quoteRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  quoteText: { color: "#9CA3AF", fontSize: 12 },
+  quoteBox: {
+    backgroundColor: "#141B17", borderRadius: 10, padding: 10, gap: 6,
+  },
+  swapBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    borderRadius: 12, paddingVertical: 14, gap: 8,
+  },
+  swapBtnText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
+  settlingRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, marginBottom: 16,
+  },
+  settlingText: { color: "#9CA3AF", fontSize: 13 },
+  errorText: { color: "#EF4444", fontSize: 12, textAlign: "center", marginBottom: 12, paddingHorizontal: 24 },
+  // Amount input
+  amountCard: {
+    backgroundColor: "#1E2E29", borderRadius: 16,
+    padding: 16, marginHorizontal: 24, marginBottom: 16, gap: 10,
+  },
+  amountLabel: {
+    color: "#9CA3AF", fontSize: 12, fontWeight: "500",
+    textTransform: "uppercase", letterSpacing: 0.5,
+  },
+  amountInputRow: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: "#0F1512", borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 4,
+    borderWidth: 1, borderColor: "#374151", gap: 8,
+  },
+  amountInputRowError: { borderColor: "#EF4444" },
+  amountSymbol: { color: "#9CA3AF", fontSize: 16, fontWeight: "600", minWidth: 40 },
+  amountInput: {
+    flex: 1, color: "#FFFFFF", fontSize: 24, fontWeight: "700", paddingVertical: 12,
+  },
+  amountErrorText: { color: "#EF4444", fontSize: 13, marginTop: -4 },
+  amountFiatEquiv: { color: "#9CA3AF", fontSize: 13, marginTop: 4, textAlign: "center" },
+  // Info card
+  infoCard: {
+    backgroundColor: "#1E2E29", borderRadius: 16,
+    padding: 16, marginHorizontal: 24, marginBottom: 16, gap: 4,
+  },
+  infoRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  infoLabel: {
+    color: "#9CA3AF", fontSize: 12, fontWeight: "500",
+    textTransform: "uppercase", letterSpacing: 0.5,
+  },
+  infoAddress: { color: "#FFFFFF", fontSize: 16, fontWeight: "600", fontFamily: "monospace" },
+  infoNetwork: { color: "#6B7280", fontSize: 13 },
+  warningRow: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#374151",
+  },
+  warningText: { color: "#F59E0B", fontSize: 13 },
+  footer: { padding: 24, paddingTop: 8 },
+  primaryButton: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    backgroundColor: "#10B981", borderRadius: 14, paddingVertical: 16, gap: 10,
+  },
+  primaryButtonDisabled: { opacity: 0.5 },
+  primaryButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "700" },
+  stopButton: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    backgroundColor: "#374151", borderRadius: 14, paddingVertical: 16, gap: 10,
+  },
+  stopButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "600" },
+  emptyContainer: { flex: 1, alignItems: "center", justifyContent: "center" },
+  emptyText: { color: "#6B7280", fontSize: 16 },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  modalContent: {
+    backgroundColor: "#0F1512", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    maxHeight: "75%", paddingBottom: 24,
+  },
+  modalHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 20, paddingVertical: 16,
+    borderBottomWidth: 1, borderBottomColor: "#1E2E29",
+  },
+  modalTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "700" },
+  assetItem: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingHorizontal: 20, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: "#1E2E29",
+  },
+  assetItemSelected: { backgroundColor: "#1A2520" },
+  assetItemIcon: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: "#1F2937",
+    alignItems: "center", justifyContent: "center",
+  },
+  assetItemIconText: { color: "#FFFFFF", fontWeight: "700", fontSize: 12 },
+  assetItemInfo: { flex: 1 },
+  assetItemSymbol: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
+  assetItemName: { color: "#9CA3AF", fontSize: 13, marginTop: 2 },
 });

@@ -1,32 +1,32 @@
 import { DEFAULT_NETWORKS, EthersClient } from "@/app/profiles/client";
 import { useNativePrice } from "@/hooks/use-prices";
 import { PriceService } from "@/services/price";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedCurrency } from "@/store/currency";
 import { Transaction, getSolanaChainKey, useWalletStore } from "@/store/wallet";
-
-const SOLANA_EXPLORER: Record<number, (hash: string) => string> = {
-  [getSolanaChainKey("dynamic-mainnet")]: (hash) => `https://solscan.io/tx/${hash}`,
-  [getSolanaChainKey("dynamic-testnet")]: (hash) => `https://solscan.io/tx/${hash}?cluster=devnet`,
-};
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useMemo } from "react";
 import {
-  Alert,
-  Linking,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    Linking,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+const SOLANA_EXPLORER: Record<number, (hash: string) => string> = {
+  [getSolanaChainKey("dynamic-mainnet")]: (hash) => `https://solscan.io/tx/${hash}`,
+  [getSolanaChainKey("dynamic-testnet")]: (hash) => `https://solscan.io/tx/${hash}?cluster=devnet`,
+};
+
 export default function TransactionDetailsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const { hash } = useLocalSearchParams<{ hash: string }>();
 

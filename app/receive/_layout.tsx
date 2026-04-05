@@ -8,8 +8,16 @@ export default function ReceiveLayout() {
         animation: "slide_from_right",
       }}
     >
-      <Stack.Screen name="index" />
+      <Stack.Screen
+        name="index"
+        options={{
+          presentation: "transparentModal",
+          animation: "none",
+          contentStyle: { backgroundColor: "transparent" },
+        }}
+      />
       <Stack.Screen name="show-address" />
+      <Stack.Screen name="merchant-receive" />
       <Stack.Screen
         name="request"
         options={{

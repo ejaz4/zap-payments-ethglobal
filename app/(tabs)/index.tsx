@@ -35,8 +35,7 @@ import {
   ArrowDownIcon,
   ArrowRightLeftIcon,
   ArrowUpIcon,
-  PlusIcon,
-  SettingsIcon,
+  SettingsIcon
 } from "lucide-react-native";
 import React, {
   useCallback,
@@ -161,7 +160,7 @@ function AccountCard({
             <Ionicons
               name={copied && activeCardIndex === index ? "checkmark" : "copy-outline"}
               size={14}
-              color="#9CA3AF"
+              color="rgba(255,255,255,0.4)"
             />
           </View>
         </TouchableOpacity>
@@ -174,7 +173,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const accounts = useWalletStore((s) => s.accounts);
   const selectedAccountIndex = useWalletStore((s) => s.selectedAccountIndex);
   const setSelectedAccountIndex = useWalletStore(
@@ -783,18 +782,14 @@ export default function HomeScreen() {
             onPress={() => router.push("/receive" as any)}
           />
           <ActionButton
-            icon={<PlusIcon color={accentColor} size={30} />}
-            label="Add Money"
-            onPress={() =>
-              Alert.alert("Coming Soon", "Add Money feature is coming soon!")
-            }
+            icon={<SettingsIcon color={accentColor} size={30} />}
+            label="Settings"
+            onPress={() => router.push("/settings/accounts" as any)}
           />
           <ActionButton
             icon={<ArrowRightLeftIcon color={accentColor} size={30} />}
             label="Swap"
-            onPress={() =>
-              Alert.alert("Coming Soon", "Swap feature is coming soon!")
-            }
+            onPress={() => router.push("/(tabs)/swap" as any)}
           />
         </View>
 
@@ -1055,10 +1050,11 @@ function ActionButton({
         onPress={onPress}
         onPressIn={() => {
           scale.value = withSpring(0.92, { damping: 18, stiffness: 400 });
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         }}
         onPressOut={() => {
           scale.value = withSpring(1, { damping: 18, stiffness: 400 });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         }}
         disabled={disabled}
         activeOpacity={1}
@@ -1139,7 +1135,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   addressText: {
-    color: "#9CA3AF",
+    color: "rgba(255,255,255,0.4)",
     fontSize: 14,
   },
   totalValue: {
@@ -1215,8 +1211,8 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    paddingHorizontal: 16,
+    justifyContent: "space-between",
+    paddingHorizontal: 32,
     marginBottom: 24,
   },
   actionButton: {

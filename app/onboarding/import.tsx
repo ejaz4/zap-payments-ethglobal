@@ -21,7 +21,7 @@ export default function ImportWalletScreen() {
   const accentColor = useAccentColor();
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const textPrimary = isLight ? "#11181C" : "#FFFFFF";
   const textMuted = isLight ? "#64748B" : "#9CA3AF";
   const tabBg = isLight ? "#FFFFFF" : "#1E2E29";

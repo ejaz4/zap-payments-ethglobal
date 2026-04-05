@@ -4,27 +4,27 @@
  * Reads active transaction from smart contract and allows payment
  */
 
-import { useAccentColor, tintedBackground } from "@/store/appearance";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import { formatUnits } from "ethers";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import Animated, { FadeIn, SlideInUp, ZoomIn } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
-  ActiveTransaction,
-  PaymentTerminalService,
+    ActiveTransaction,
+    PaymentTerminalService,
 } from "@/services/payment-terminal";
 import { TransactionService } from "@/services/wallet";
 
@@ -32,9 +32,9 @@ import { ChainId, DEFAULT_NETWORKS } from "@/app/profiles/client";
 import { Button } from "@/components/ui";
 import { useFiatValue } from "@/hooks/use-fiat-value";
 import {
-  useNativeBalance,
-  useSelectedAccount,
-  useWalletStore,
+    useNativeBalance,
+    useSelectedAccount,
+    useWalletStore,
 } from "@/store/wallet";
 
 type PaymentStatus =
@@ -61,7 +61,7 @@ const parseItemizedList = (
 
 export default function NfcPaymentScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const params = useLocalSearchParams<{
     address: string;

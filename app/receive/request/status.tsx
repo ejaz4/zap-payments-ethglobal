@@ -3,38 +3,38 @@ import { Button } from "@/components/ui";
 import { PaymentRequestService } from "@/services/payment-request";
 import { BalanceService } from "@/services/wallet";
 import { ZapContractService } from "@/services/zap-contract";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { usePaymentRequestStore } from "@/store/payment-request";
 import { Transaction, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import Animated, {
-  FadeIn,
-  FadeInDown,
-  FadeInUp,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
+    FadeIn,
+    FadeInDown,
+    FadeInUp,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withTiming,
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function PaymentRequestStatusScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const {
     activeRequest,

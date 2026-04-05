@@ -1,30 +1,72 @@
 import { EthersClient } from "@/app/profiles/client";
-import { useColorScheme } from "@/hooks/use-color-scheme";
-import { tintedBackground, useAccentColor } from "@/store/appearance";
+import { isUniswapSupported } from "@/config/uniswap";
+import { useAccentColor } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import React from "react";
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { MotiView } from "moti";
+import React, { useEffect, useState } from "react";
+import { Alert, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+interface ReceiveOptionProps {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  onPress: () => void;
+  iconColor?: string;
+  delay?: number;
+}
+
+function ReceiveOption({
+  icon,
+  title,
+  onPress,
+  iconColor: iconColorProp,
+  delay = 0,
+}: ReceiveOptionProps) {
+  const defaultColor = useAccentColor();
+  const iconColor = iconColorProp ?? defaultColor;
+  return (
+    <TouchableOpacity style={styles.optionContainer} onPress={onPress}>
+      <MotiView
+        from={{ opacity: 0, scale: 0.3 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{
+          delay,
+          type: "spring",
+          damping: 11,
+          stiffness: 200,
+          mass: 0.6,
+        }}
+        style={[styles.optionCircle, { backgroundColor: iconColor + "20" }]}
+      >
+        <Ionicons name={icon} size={40} color={iconColor} />
+      </MotiView>
+      <MotiView
+        from={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{
+          delay: delay + 100,
+          type: "timing",
+          duration: 300,
+        }}
+      >
+        <Text style={styles.optionLabel}>{title}</Text>
+      </MotiView>
+    </TouchableOpacity>
+  );
+}
 
 export default function ReceiveOptionsScreen() {
   const accentColor = useAccentColor();
-  const scheme = useColorScheme() ?? "dark";
-  const isLight = scheme === "light";
-  const bg = tintedBackground(accentColor);
-  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
-  const textMuted = isLight ? "#64748B" : "#9CA3AF";
-  const cardBg = isLight ? "#FFFFFF" : "#1E2E29";
-  const cardBorder = isLight ? "#DCE8E2" : "transparent";
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const networkConfig = EthersClient.getNetworkConfig(selectedChainId);
 
-  // Check for Zap Contract - subscribe to contracts state for reactivity
+  // Check for Zap Contract
   const contracts = useZapContractStore((s) => s.contracts);
   const hasZapContract = React.useMemo(() => {
     if (!selectedAccount) return false;
@@ -32,12 +74,10 @@ export default function ReceiveOptionsScreen() {
     return !!contracts[key]?.address;
   }, [selectedAccount, selectedChainId, contracts]);
 
-  // Handle press on Zap-related options
   const handleZapOptionPress = (route: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (!hasZapContract) {
-      // Redirect to setup
       Alert.alert(
         "Zap Contract Required",
         "You need to set up a Zap Contract to use this feature. Would you like to set one up now?",
@@ -57,167 +97,126 @@ export default function ReceiveOptionsScreen() {
 
   if (!selectedAccount) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
+      <SafeAreaView style={styles.container} edges={["bottom"]}>
+        <MotiView
+          from={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ type: "timing", duration: 220 }}
+          style={styles.backdrop}
+        >
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => router.back()} />
+        </MotiView>
         <View style={styles.emptyContainer}>
-          <Text style={[styles.emptyText, { color: textMuted }]}>No wallet found</Text>
+          <Text style={styles.emptyText}>No wallet found</Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  const [isClosing, setIsClosing] = useState(false);
+
+  useEffect(() => {
+    if (isClosing) {
+      const timer = setTimeout(() => router.back(), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [isClosing, router]);
+
+  const closeModal = () => setIsClosing(true);
+
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="close" size={24} color={textPrimary} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: textPrimary }]}>Receive</Text>
-        <View style={{ width: 24 }} />
-      </View>
+    <SafeAreaView style={styles.container} edges={["bottom"]}>
+      <MotiView
+        from={{ opacity: 0 }}
+        animate={{ opacity: isClosing ? 0 : 1 }}
+        transition={{ type: "timing", duration: 220 }}
+        style={styles.backdrop}
+      >
+        <Pressable style={StyleSheet.absoluteFill} onPress={closeModal} />
+      </MotiView>
 
-      <View style={styles.content}>
-        <Text style={[styles.subtitle, { color: textMuted }]}> 
-          Choose how you want to receive funds on{" "}
-          {networkConfig?.name || "Ethereum"}
-        </Text>
+      <MotiView
+        from={{ opacity: 0, translateY: 180, scale: 0.96 }}
+        animate={{
+          opacity: isClosing ? 0 : 1,
+          translateY: isClosing ? 200 : 0,
+          scale: isClosing ? 0.96 : 1,
+        }}
+        transition={{
+          type: "spring",
+          damping: 14,
+          stiffness: 165,
+          mass: 0.82,
+        }}
+        style={styles.popup}
+      >
+        <View style={styles.grabber} />
 
-        {/* Option 1: Show Address */}
-        <TouchableOpacity
-          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
-          onPress={() => router.push("/receive/show-address")}
-        >
-          <View style={[styles.optionIconContainer, { backgroundColor: accentColor + "20" }]}>
-            <Ionicons name="qr-code-outline" size={32} color={accentColor} />
-          </View>
-          <View style={styles.optionContent}>
-            <Text style={[styles.optionTitle, { color: textPrimary }]}>Show Address</Text>
-            <Text style={[styles.optionDescription, { color: textMuted }]}> 
-              Display your wallet address and QR code for someone to send you
-              funds directly
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={24} color="#6B7280" />
-        </TouchableOpacity>
-
-        {/* Option 2: Payment Request */}
-        <TouchableOpacity
-          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
-          onPress={() => handleZapOptionPress("/receive/request")}
-        >
-          <View
-            style={[
-              styles.optionIconContainer,
-              { backgroundColor: "#10B98120" },
-            ]}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Receive</Text>
+          <TouchableOpacity
+            onPress={closeModal}
+            style={styles.closeButton}
           >
-            <Ionicons name="receipt-outline" size={32} color="#10B981" />
-          </View>
-          <View style={styles.optionContent}>
-            <View style={styles.optionTitleRow}>
-              <Text style={[styles.optionTitle, { color: textPrimary }]}>Payment Request</Text>
-              {!hasZapContract && (
-                <View style={styles.setupBadge}>
-                  <Text style={styles.setupBadgeText}>Setup Required</Text>
-                </View>
-              )}
-            </View>
-            <Text style={[styles.optionDescription, { color: textMuted }]}> 
-              Create a payment request with a specific amount, description, and
-              itemized list
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={24} color="#6B7280" />
-        </TouchableOpacity>
-
-        {/* Option 3: Zap Terminal */}
-        <TouchableOpacity
-          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
-          onPress={() => handleZapOptionPress("/receive/terminal")}
-        >
-          <View
-            style={[
-              styles.optionIconContainer,
-              { backgroundColor: "#8B5CF620" },
-            ]}
-          >
-            <Ionicons name="hardware-chip-outline" size={32} color="#8B5CF6" />
-          </View>
-          <View style={styles.optionContent}>
-            <View style={styles.optionTitleRow}>
-              <Text style={[styles.optionTitle, { color: textPrimary }]}>Zap Terminal</Text>
-              {!hasZapContract && (
-                <View style={styles.setupBadge}>
-                  <Text style={styles.setupBadgeText}>Setup Required</Text>
-                </View>
-              )}
-            </View>
-            <Text style={[styles.optionDescription, { color: textMuted }]}> 
-              Send payment request to an external Zap Terminal device for
-              customer-facing display
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={24} color="#6B7280" />
-        </TouchableOpacity>
-
-        {/* Option 4: Zap Pay (HCE) */}
-        <TouchableOpacity
-          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            router.push("/receive/zap-pay" as any);
-          }}
-        >
-          <View
-            style={[
-              styles.optionIconContainer,
-              { backgroundColor: "#10B98120" },
-            ]}
-          >
-            <Ionicons name="radio-outline" size={32} color="#10B981" />
-          </View>
-          <View style={styles.optionContent}>
-            <View style={styles.optionTitleRow}>
-              <Text style={[styles.optionTitle, { color: textPrimary }]}>Zap Pay</Text>
-              <View style={styles.newBadge}>
-                <Text style={styles.newBadgeText}>NFC</Text>
-              </View>
-            </View>
-            <Text style={[styles.optionDescription, { color: textMuted }]}> 
-              Broadcast your address via NFC — let someone tap their phone to
-              pay you instantly
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={24} color="#6B7280" />
-        </TouchableOpacity>
-
-        {/* Zap Contract Setup Link */}
-        <TouchableOpacity
-          style={styles.setupLink}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            router.push("/settings/zap-contract" as any);
-          }}
-        >
-          <Ionicons name="settings-outline" size={18} color={accentColor} />
-          <Text style={[styles.setupLinkText, { color: accentColor }]}>
-            {hasZapContract ? "Manage Zap Contract" : "Set Up Zap Contract"}
-          </Text>
-          <Ionicons name="chevron-forward" size={16} color={accentColor} />
-        </TouchableOpacity>
-
-        {/* Info Box */}
-        <View style={styles.infoBox}>
-          <Ionicons
-            name="information-circle-outline"
-            size={20}
-            color={accentColor}
-          />
-          <Text style={[styles.infoText, { color: accentColor }]}>
-            Payment Request and Zap Terminal require a deployed smart contract.
-            Go to Settings → Zap Contract to set one up.
-          </Text>
+            <Ionicons name="close" size={20} color="#E5E7EB" />
+          </TouchableOpacity>
         </View>
-      </View>
+
+        <View style={styles.content}>
+          <Text style={styles.sectionTitle}>Choose how to receive</Text>
+
+          <View style={styles.optionsGrid}>
+
+            <ReceiveOption
+              icon="qr-code-outline"
+              title="Show Address"
+              onPress={() => router.push("/receive/show-address")}
+              iconColor={accentColor}
+              delay={100}
+            />
+
+            <ReceiveOption
+              icon="receipt-outline"
+              title="Payment Request"
+              onPress={() => handleZapOptionPress("/receive/request")}
+              iconColor="#10B981"
+              delay={200}
+            />
+
+            <ReceiveOption
+              icon="hardware-chip-outline"
+              title="Zap Terminal"
+              onPress={() => handleZapOptionPress("/receive/terminal")}
+              iconColor="#8B5CF6"
+              delay={300}
+            />
+
+            {isUniswapSupported(selectedChainId) && (
+              <ReceiveOption
+                icon="storefront-outline"
+                title="Merchant Receive"
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  router.push("/receive/merchant-receive" as any);
+                }}
+                iconColor="#FF007A"
+                delay={400}
+              />
+            )}
+
+            <ReceiveOption
+              icon="radio-outline"
+              title="Zap Pay"
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                router.push("/receive/zap-pay" as any);
+              }}
+              iconColor="#10B981"
+              delay={500}
+            />
+          </View>
+        </View>
+      </MotiView>
     </SafeAreaView>
   );
 }
@@ -225,117 +224,90 @@ export default function ReceiveOptionsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0F1512",
+    justifyContent: "flex-end",
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.58)",
+  },
+  popup: {
+    backgroundColor: "#0F0F10",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderWidth: 1,
+    borderColor: "#25262A",
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+    shadowColor: "#000000",
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: -8 },
+    elevation: 14,
+  },
+  grabber: {
+    alignSelf: "center",
+    width: 42,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "#3B3B40",
+    marginBottom: 12,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1E2E29",
+    paddingHorizontal: 4,
+    marginBottom: 10,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#202126",
   },
   headerTitle: {
-    color: "#FFFFFF",
     fontSize: 18,
     fontWeight: "600",
+    color: "#FFFFFF",
   },
   content: {
-    flex: 1,
-    padding: 24,
-  },
-  subtitle: {
-    color: "#9CA3AF",
-    fontSize: 16,
-    marginBottom: 24,
-    lineHeight: 24,
-  },
-  optionCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    // backgroundColor: "#1E2E29",
-    backgroundColor: "#1E2E29",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    gap: 16,
-  },
-  optionIconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 16,
-    backgroundColor: "#569F8C20",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  optionContent: {
-    flex: 1,
-  },
-  optionTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 4,
-  },
-  optionTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  optionDescription: {
-    color: "#9CA3AF",
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  setupBadge: {
-    backgroundColor: "#F59E0B20",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  setupBadgeText: {
-    color: "#F59E0B",
-    fontSize: 10,
-    fontWeight: "600",
-  },
-  newBadge: {
-    backgroundColor: "#10B98120",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  newBadgeText: {
-    color: "#10B981",
-    fontSize: 10,
-    fontWeight: "600",
-  },
-  setupLink: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    padding: 12,
-    marginTop: 8,
-  },
-  setupLinkText: {
-    color: "#569F8C",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  infoBox: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    backgroundColor: "rgba(14, 118, 253, 0.1)",
     padding: 16,
-    borderRadius: 12,
-    gap: 12,
-    marginTop: 16,
   },
-  infoText: {
-    flex: 1,
-    color: "#569F8C",
+  sectionTitle: {
     fontSize: 14,
-    lineHeight: 20,
+    fontWeight: "500",
+    color: "#9CA3AF",
+    marginBottom: 24,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  optionsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-around",
+    alignItems: "flex-start",
+  },
+  optionContainer: {
+    alignItems: "center",
+    gap: 12,
+    width: "50%",
+    marginBottom: 24,
+  },
+  optionCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  optionLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#FFFFFF",
+    textAlign: "center",
   },
   emptyContainer: {
     flex: 1,

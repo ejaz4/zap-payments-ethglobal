@@ -3,7 +3,7 @@ import { ENSService } from "@/services/ens";
 import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { Contact, useContacts } from "@/store/contacts";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
     FlatList,
     Image,
@@ -44,7 +44,7 @@ export function ContactPicker({
   onSelectContact,
 }: ContactPickerProps) {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
   const titleColor = isLight ? "#0F172A" : "#FFFFFF";
@@ -160,16 +160,9 @@ function ContactPickerRow({
   isLight: boolean;
 }) {
   const color = avatarColor(contact.name);
-  const [avatar, setAvatar] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!contact.ensName) return;
-    let cancelled = false;
-    ENSService.getProfile(contact.ensName).then((p) => {
-      if (!cancelled && p?.avatar) setAvatar(p.avatar);
-    });
-    return () => { cancelled = true; };
-  }, [contact.ensName]);
+  // Use the metadata service URL directly for ENS avatars
+  const avatarUrl = contact.ensName ? ENSService.avatarUrl(contact.ensName) : null;
+  const [hasAvatar, setHasAvatar] = useState(!!avatarUrl);
 
   return (
     <TouchableOpacity
@@ -183,8 +176,8 @@ function ContactPickerRow({
       ]}
       onPress={onPress}
     >
-      {avatar ? (
-        <Image source={{ uri: avatar }} style={styles.contactAvatarImage} />
+      {hasAvatar && avatarUrl ? (
+        <Image source={{ uri: avatarUrl }} style={styles.contactAvatarImage} onError={() => setHasAvatar(false)} />
       ) : (
         <View style={[styles.contactAvatar, { backgroundColor: color }]}>
           <Text style={styles.contactAvatarText}>

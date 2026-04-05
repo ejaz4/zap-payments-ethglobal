@@ -1,24 +1,24 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import {
-  SUPPORTED_CURRENCIES,
-  useCurrencyStore,
-  useSelectedCurrency,
+    SUPPORTED_CURRENCIES,
+    useCurrencyStore,
+    useSelectedCurrency,
 } from "@/store/currency";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-  FlatList,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    FlatList,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function CurrencySettingsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const selectedCurrency = useSelectedCurrency();
   const setCurrency = useCurrencyStore((s) => s.setCurrency);

@@ -1,21 +1,21 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function AccountsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const accounts = useWalletStore((s) => s.accounts);
   const selectedIndex = useWalletStore((s) => s.selectedAccountIndex);

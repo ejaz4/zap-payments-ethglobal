@@ -5,7 +5,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 export interface MerchantProduct {
   id: string;
   name: string;
-  /** Decimal string price in the native currency of the selected chain */
+  /** Decimal string price in the merchant's pricing currency */
   price: string;
   /** Optional display emoji */
   emoji: string;
@@ -16,9 +16,20 @@ export interface BasketItem {
   quantity: number;
 }
 
+/**
+ * The currency the merchant prices their products in.
+ * - "native": chain's native gas token (ETH, MATIC, etc.)
+ * - "token": a specific ERC-20 (USDC, USDT, DAI, etc.)
+ */
+export type PricingToken =
+  | { type: "native" }
+  | { type: "token"; address: string; symbol: string; decimals: number };
+
 interface MerchantState {
   products: MerchantProduct[];
   basket: BasketItem[];
+  /** Currency used for product pricing. Defaults to native. */
+  pricingToken: PricingToken;
 }
 
 interface MerchantActions {
@@ -30,6 +41,7 @@ interface MerchantActions {
   clearBasket: () => void;
   getBasketTotal: () => string;
   getBasketCount: () => number;
+  setPricingToken: (token: PricingToken) => void;
 }
 
 export const useMerchantStore = create<MerchantState & MerchantActions>()(
@@ -37,6 +49,7 @@ export const useMerchantStore = create<MerchantState & MerchantActions>()(
     (set, get) => ({
       products: [],
       basket: [],
+      pricingToken: { type: "native" } as PricingToken,
 
       addProduct: (product) => {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -103,12 +116,14 @@ export const useMerchantStore = create<MerchantState & MerchantActions>()(
       getBasketCount: () => {
         return get().basket.reduce((sum, b) => sum + b.quantity, 0);
       },
+
+      setPricingToken: (token) => set({ pricingToken: token }),
     }),
     {
       name: "zap-merchant-storage",
       storage: createJSONStorage(() => AsyncStorage),
       // Basket is intentionally NOT persisted — it resets between sessions
-      partialize: (state) => ({ products: state.products }),
+      partialize: (state) => ({ products: state.products, pricingToken: state.pricingToken }),
     },
   ),
 );

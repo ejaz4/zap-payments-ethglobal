@@ -1,12 +1,13 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
+import { getDefaultTokensForChain } from "@/config/tokens";
 import { useFiatValue } from "@/hooks/use-fiat-value";
 import { hexToRgba, tintedBackground, useAccentColor } from "@/store/appearance";
-import { MerchantProduct, useMerchantStore } from "@/store/merchant";
+import { MerchantProduct, PricingToken, useMerchantStore } from "@/store/merchant";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
     Alert,
     FlatList,
@@ -137,12 +138,14 @@ interface ProductCardProps {
   quantity: number;
   symbol: string;
   chainId: ChainId;
+  /** If true, pricing is in a stablecoin — skip redundant fiat display */
+  isStablePricing?: boolean;
   onAdd: () => void;
   onRemove: () => void;
   onLongPress: () => void;
 }
 
-function ProductCard({ product, quantity, symbol, chainId, onAdd, onRemove, onLongPress }: ProductCardProps) {
+function ProductCard({ product, quantity, symbol, chainId, isStablePricing, onAdd, onRemove, onLongPress }: ProductCardProps) {
   const accentColor = useAccentColor();
   const fiat = useFiatValue(product.price, chainId);
   return (
@@ -156,7 +159,7 @@ function ProductCard({ product, quantity, symbol, chainId, onAdd, onRemove, onLo
       <Text style={card.emoji}>{product.emoji}</Text>
       <Text style={card.name} numberOfLines={2}>{product.name}</Text>
       <Text style={card.price}>{product.price} {symbol}</Text>
-      {fiat && <Text style={card.fiat}>{fiat}</Text>}
+      {!isStablePricing && fiat && <Text style={card.fiat}>{fiat}</Text>}
 
       {quantity > 0 && (
         <View style={card.qtyRow}>
@@ -179,11 +182,11 @@ function ProductCard({ product, quantity, symbol, chainId, onAdd, onRemove, onLo
 
 export default function MerchantScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const networkConfig = EthersClient.getNetworkConfig(selectedChainId);
-  const symbol = networkConfig?.nativeCurrency.symbol ?? "ETH";
+  const nativeSymbol = networkConfig?.nativeCurrency.symbol ?? "ETH";
 
   const products = useMerchantStore((s) => s.products);
   const basket = useMerchantStore((s) => s.basket);
@@ -195,10 +198,34 @@ export default function MerchantScreen() {
   const clearBasket = useMerchantStore((s) => s.clearBasket);
   const getBasketTotal = useMerchantStore((s) => s.getBasketTotal);
   const getBasketCount = useMerchantStore((s) => s.getBasketCount);
+  const pricingToken = useMerchantStore((s) => s.pricingToken);
+  const setPricingToken = useMerchantStore((s) => s.setPricingToken);
+
+  // Display symbol from pricing token
+  const symbol = pricingToken.type === "token" ? pricingToken.symbol : nativeSymbol;
+
+  // Build currency options: native + stablecoins from this chain
+  const STABLE_SYMBOLS = new Set(["USDC", "USDT", "DAI", "BUSD", "USDbC", "USDC.e"]);
+  const currencyOptions = useMemo(() => {
+    const options: Array<{ label: string; token: PricingToken }> = [
+      { label: nativeSymbol, token: { type: "native" } },
+    ];
+    const chainTokens = getDefaultTokensForChain(selectedChainId);
+    for (const t of chainTokens) {
+      if (STABLE_SYMBOLS.has(t.symbol)) {
+        options.push({
+          label: t.symbol,
+          token: { type: "token", address: t.address, symbol: t.symbol, decimals: t.decimals },
+        });
+      }
+    }
+    return options;
+  }, [selectedChainId, nativeSymbol]);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [editingProduct, setEditingProduct] = useState<MerchantProduct | null>(null);
   const [basketOpen, setBasketOpen] = useState(false);
+  const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
 
   const basketCount = getBasketCount();
   const basketTotal = getBasketTotal();
@@ -265,7 +292,13 @@ export default function MerchantScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Merchant</Text>
-          <Text style={styles.headerSub}>Receiving in {symbol}</Text>
+          <TouchableOpacity
+            style={styles.currencySelector}
+            onPress={() => setShowCurrencyPicker(true)}
+          >
+            <Text style={styles.headerSub}>Pricing in {symbol}</Text>
+            <Ionicons name="chevron-down" size={14} color="#6B7280" />
+          </TouchableOpacity>
         </View>
         <TouchableOpacity
           style={[styles.addBtn, { backgroundColor: accentColor }]}
@@ -302,6 +335,7 @@ export default function MerchantScreen() {
               quantity={getQuantity(item.id)}
               symbol={symbol}
               chainId={selectedChainId}
+              isStablePricing={pricingToken.type === "token"}
               onAdd={() => handleAdd(item.id)}
               onRemove={() => handleRemove(item.id)}
               onLongPress={() => handleLongPress(item)}
@@ -322,7 +356,7 @@ export default function MerchantScreen() {
             </View>
             <View style={{ alignItems: "flex-end" }}>
               <Text style={[styles.basketTotal, { color: accentColor }]}>{basketTotal} {symbol}</Text>
-              {basketFiat && <Text style={styles.basketFiat}>{basketFiat}</Text>}
+              {pricingToken.type === "native" && basketFiat && <Text style={styles.basketFiat}>{basketFiat}</Text>}
             </View>
           </TouchableOpacity>
         </View>
@@ -371,7 +405,7 @@ export default function MerchantScreen() {
                 <Text style={sheet.totalLabel}>Total</Text>
                 <View style={{ alignItems: "flex-end" }}>
                   <Text style={sheet.totalAmount}>{basketTotal} {symbol}</Text>
-                  {basketFiat && <Text style={sheet.totalFiat}>{basketFiat}</Text>}
+                  {pricingToken.type === "native" && basketFiat && <Text style={sheet.totalFiat}>{basketFiat}</Text>}
                 </View>
               </View>
               <TouchableOpacity style={[sheet.payBtn, { backgroundColor: accentColor }]} onPress={handleRequestPayment}>
@@ -381,6 +415,34 @@ export default function MerchantScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Currency picker modal */}
+      <Modal visible={showCurrencyPicker} transparent animationType="fade" onRequestClose={() => setShowCurrencyPicker(false)}>
+        <TouchableOpacity style={currPicker.overlay} activeOpacity={1} onPress={() => setShowCurrencyPicker(false)}>
+          <View style={currPicker.sheet}>
+            <Text style={currPicker.title}>Pricing Currency</Text>
+            <Text style={currPicker.desc}>Choose the currency for product prices</Text>
+            {currencyOptions.map((opt, i) => {
+              const isActive = pricingToken.type === opt.token.type &&
+                (opt.token.type === "native" || (opt.token.type === "token" && pricingToken.type === "token" && pricingToken.symbol === opt.token.symbol));
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[currPicker.option, isActive && { borderColor: accentColor, backgroundColor: hexToRgba(accentColor, 0.1) }]}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setPricingToken(opt.token);
+                    setShowCurrencyPicker(false);
+                  }}
+                >
+                  <Text style={[currPicker.optionText, isActive && { color: accentColor }]}>{opt.label}</Text>
+                  {isActive && <Ionicons name="checkmark-circle" size={18} color={accentColor} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       {/* Add/Edit product modal */}
@@ -412,6 +474,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "700" },
   headerSub: { color: "#6B7280", fontSize: 13, marginTop: 2 },
+  currencySelector: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
   addBtn: {
     width: 40,
     height: 40,
@@ -635,4 +698,30 @@ const modal = StyleSheet.create({
   saveBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
   cancelBtn: { paddingVertical: 12, alignItems: "center", marginBottom: 8 },
   cancelBtnText: { color: "#6B7280", fontSize: 15 },
+});
+
+const currPicker = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 32 },
+  sheet: {
+    backgroundColor: "#0F1512",
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 340,
+    gap: 10,
+  },
+  title: { color: "#FFFFFF", fontSize: 18, fontWeight: "700" },
+  desc: { color: "#6B7280", fontSize: 13, marginBottom: 4 },
+  option: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#1E2E29",
+    backgroundColor: "#1E2E29",
+  },
+  optionText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
 });

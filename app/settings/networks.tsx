@@ -1,19 +1,19 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { ChainId, DEFAULT_NETWORKS } from "@/app/profiles/client";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useNetworkStore } from "@/store/network";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    KeyboardAvoidingView,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -33,7 +33,7 @@ const NETWORK_META: Record<number, { icon: string }> = {
 
 export default function NetworkSettingsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const customRpcUrls = useNetworkStore((s) => s.customRpcUrls);
   const customNetworks = useNetworkStore((s) => s.customNetworks);

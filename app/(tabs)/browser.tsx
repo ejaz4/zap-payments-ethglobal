@@ -5,43 +5,43 @@
 
 import { EthersClient } from "@/app/profiles/client";
 import {
-  handleProviderRequest,
-  PendingApproval,
-  rejectApproval,
-  resolveApproval,
-  sendTransaction,
-  setApprovalCallback,
-  signMessage,
-  signTypedData,
+    handleProviderRequest,
+    PendingApproval,
+    rejectApproval,
+    resolveApproval,
+    sendTransaction,
+    setApprovalCallback,
+    signMessage,
+    signTypedData,
 } from "@/services/browser-provider";
 import { BROWSER_INJECTION_SCRIPT } from "@/services/browser-scripts";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import {
-  DAppSession,
-  getDappHost,
-  normalizeUrl,
-  useBrowserStore,
-  ZAP_WALLET_USER_AGENT,
+    DAppSession,
+    getDappHost,
+    normalizeUrl,
+    useBrowserStore,
+    ZAP_WALLET_USER_AGENT,
 } from "@/store/browser";
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  BackHandler,
-  Dimensions,
-  FlatList,
-  Keyboard,
-  Modal,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    BackHandler,
+    Dimensions,
+    FlatList,
+    Keyboard,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import WebView, { WebViewMessageEvent } from "react-native-webview";
@@ -65,7 +65,7 @@ const POPULAR_DAPPS = [
 export default function BrowserScreen() {
   const insets = useSafeAreaInsets();
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const webViewRef = useRef<WebView>(null);
   const webViewRefs = useRef<Record<string, WebView | null>>({});
   const inputRef = useRef<TextInput>(null);

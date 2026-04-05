@@ -67,5 +67,49 @@ export const plasmaTestnet = defineChain({
   testnet: true,
 });
 
+export const unichain = defineChain({
+  id: 130,
+  name: "Unichain",
+  nativeCurrency: {
+    decimals: 18,
+    name: "Ether",
+    symbol: "ETH",
+  },
+  rpcUrls: {
+    default: {
+      http: ["https://mainnet.unichain.org"],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: "Uniscan",
+      url: "https://uniscan.xyz",
+    },
+  },
+});
+
+export const unichainSepolia = defineChain({
+  id: 1301,
+  name: "Unichain Sepolia",
+  nativeCurrency: {
+    decimals: 18,
+    name: "Ether",
+    symbol: "ETH",
+  },
+  rpcUrls: {
+    default: {
+      http: ["https://sepolia.unichain.org"],
+      webSocket: ["wss://unichain-sepolia-rpc.publicnode.com"],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: "Uniscan",
+      url: "https://sepolia.uniscan.xyz",
+    },
+  },
+  testnet: true,
+});
+
 export const apiStitch = (url: string) =>
   `${process.env["EXPO_PUBLIC_API_URL"]}${url}`;

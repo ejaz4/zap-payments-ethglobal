@@ -434,8 +434,30 @@ export class WalletService {
 
       const networkId = useProviderStore.getState().selectedApiNetworkId ?? "dynamic-mainnet";
       const provider = new ApiProvider(apiBaseUrl);
-      const keypair = await provider.createKeypair(networkId);
-      const { address, privateKey, walletId } = keypair;
+      const keypair = await provider.createKeypair(networkId, "ed25519");
+      const { privateKey, walletId, publicKey } = keypair;
+
+      // The API returns a 0x EVM-style address even for ed25519 keys — derive
+      // the real Solana address (base58 of the 32-byte public key) client-side.
+      let address = keypair.address;
+      if (publicKey && publicKey.length === 64 && !keypair.address.match(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)) {
+        const bytes = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) {
+          bytes[i] = parseInt(publicKey.slice(i * 2, i * 2 + 2), 16);
+        }
+        // Base58 encode (Bitcoin/Solana alphabet)
+        const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        let num = BigInt("0x" + publicKey);
+        let encoded = "";
+        while (num > 0n) {
+          encoded = ALPHABET[Number(num % 58n)] + encoded;
+          num = num / 58n;
+        }
+        for (const b of bytes) {
+          if (b === 0) encoded = "1" + encoded; else break;
+        }
+        address = encoded;
+      }
 
       if (store.accounts.some((a) => a.address === address)) {
         throw new Error("Account already exists");

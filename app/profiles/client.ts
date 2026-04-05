@@ -37,6 +37,9 @@ export enum ChainId {
   bsc = 56,
   plasmaTestnet = 9746,
   chilizSpicy = 88882,
+  unichain = 130,
+  unichainSepolia = 1301,
+  solanaDevnet = 999002,
 }
 
 /**
@@ -142,6 +145,27 @@ export const DEFAULT_NETWORKS: Record<ChainId, NetworkConfig> = {
     rpcUrl: "https://spicy-rpc.chiliz.com",
     nativeCurrency: { name: "Chiliz", symbol: "CHZ", decimals: 18 },
     blockExplorerUrl: "https://testnet.chiliscan.com",
+  },
+  [ChainId.unichain]: {
+    chainId: ChainId.unichain,
+    name: "Unichain",
+    rpcUrl: "https://mainnet.unichain.org",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    blockExplorerUrl: "https://uniscan.xyz",
+  },
+  [ChainId.unichainSepolia]: {
+    chainId: ChainId.unichainSepolia,
+    name: "Unichain Sepolia",
+    rpcUrl: "https://unichain-sepolia-rpc.publicnode.com",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    blockExplorerUrl: "https://sepolia.uniscan.xyz",
+  },
+  [ChainId.solanaDevnet]: {
+    chainId: ChainId.solanaDevnet,
+    name: "Solana Devnet",
+    rpcUrl: "https://api.devnet.solana.com",
+    nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
+    blockExplorerUrl: "https://explorer.solana.com/?cluster=devnet",
   },
 };
 
@@ -771,7 +795,7 @@ export class EthersClient {
    * Based on Rainbow's isTestnetChain
    */
   static isTestnetChain(chainId: ChainId): boolean {
-    const testnets: ChainId[] = [ChainId.goerli, ChainId.sepolia];
+    const testnets: ChainId[] = [ChainId.goerli, ChainId.sepolia, ChainId.solanaDevnet];
     return testnets.includes(chainId);
   }
 

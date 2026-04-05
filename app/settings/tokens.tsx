@@ -1,27 +1,27 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { ChainId, DEFAULT_NETWORKS, EthersClient } from "@/app/profiles/client";
 import { DEFAULT_TOKENS, getTokenKey, TokenInfo } from "@/config/tokens";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { CustomToken, useTokenStore } from "@/store/tokens";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function TokensSettingsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
 

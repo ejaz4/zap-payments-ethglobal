@@ -1,8 +1,9 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
-import { ENSProfile, ENSService } from "@/services/ens";
+import { ChainId } from "@/app/profiles/client";
 import { AddressInput } from "@/components/ui/AddressInput";
-import { Contact, useContacts, useContactsStore } from "@/store/contacts";
 import { useLastActive } from "@/hooks/use-ens";
+import { ENSProfile, ENSService } from "@/services/ens";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
+import { Contact, useContacts, useContactsStore } from "@/store/contacts";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -10,28 +11,27 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  KeyboardAvoidingView,
-  Linking,
-  Modal,
-  Platform,
-  ScrollView,
-  SectionList,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Image,
+    KeyboardAvoidingView,
+    Linking,
+    Modal,
+    Platform,
+    ScrollView,
+    SectionList,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
 } from "react-native-reanimated";
-import { ChainId } from "@/app/profiles/client";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 // ─── Avatar colour ──────────────────────────────────────────────────────────
 
@@ -114,6 +114,7 @@ const CHAIN_LABELS: Record<string, string> = {
   [`${ChainId.polygon}`]:  "Polygon",
   [`${ChainId.bsc}`]:      "BNB Chain",
   solana:                   "Solana",
+  btc:                      "Bitcoin",
 };
 
 const CHAIN_ICONS: Record<string, string> = {
@@ -124,6 +125,31 @@ const CHAIN_ICONS: Record<string, string> = {
   [`${ChainId.polygon}`]:  "🟣",
   [`${ChainId.bsc}`]:      "🟡",
   solana:                   "☀️",
+  btc:                      "🟠",
+};
+
+/** Human-readable labels for ENS text record keys */
+const TEXT_RECORD_LABELS: Record<string, string> = {
+  "avatar": "Avatar",
+  "description": "Description",
+  "header": "Header",
+  "display": "Display Name",
+  "name": "Name",
+  "location": "Location",
+  "keywords": "Keywords",
+  "notice": "Notice",
+  "url": "Website",
+  "email": "Email",
+  "com.twitter": "Twitter",
+  "com.github": "GitHub",
+  "com.discord": "Discord",
+  "org.telegram": "Telegram",
+  "com.reddit": "Reddit",
+  "com.linkedin": "LinkedIn",
+  "com.instagram": "Instagram",
+  "com.youtube": "YouTube",
+  "io.keybase": "Keybase",
+  "xyz.farcaster": "Farcaster",
 };
 
 // ─── Last Active Badge ──────────────────────────────────────────────────────
@@ -454,6 +480,43 @@ function ContactDetail({
           </View>
         )}
 
+        {/* Text Records section - all raw ENS records */}
+        {profile && Object.keys(profile.textRecords).length > 0 && (
+          <View style={detailStyles.section}>
+            <Text style={detailStyles.sectionTitle}>TEXT RECORDS</Text>
+            <View style={detailStyles.groupedCard}>
+              {Object.entries(profile.textRecords).map(([key, value], index) => (
+                <TouchableOpacity
+                  key={key}
+                  style={[
+                    detailStyles.groupedRow,
+                    index > 0 && detailStyles.groupedRowBorder,
+                  ]}
+                  onPress={() => handleCopy(value)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[detailStyles.recordKeyBadge, { backgroundColor: accentColor + "18" }]}>
+                    <Text style={[detailStyles.recordKeyText, { color: accentColor }]} numberOfLines={1}>
+                      {TEXT_RECORD_LABELS[key] ?? key}
+                    </Text>
+                  </View>
+                  <View style={detailStyles.groupedRowInfo}>
+                    <Text style={detailStyles.recordKeyRaw}>{key}</Text>
+                    <Text style={detailStyles.recordValue} numberOfLines={2}>
+                      {value}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={copiedAddress === value ? "checkmark-circle" : "copy-outline"}
+                    size={16}
+                    color={copiedAddress === value ? accentColor : "#4B5563"}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Info section - ENS metadata */}
         {contact.ensName && (
           <View style={detailStyles.section}>
@@ -495,7 +558,7 @@ function ContactDetail({
 
 export default function ContactsScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const contacts = useContacts();
   const { addContact, updateContact, removeContact } = useContactsStore();
@@ -763,22 +826,13 @@ function ContactRow({
   onPress: () => void;
 }) {
   const color = avatarColor(contact.name);
-  const [avatar, setAvatar] = useState<string | null>(null);
+  const avatarUrl = contact.ensName ? ENSService.avatarUrl(contact.ensName) : null;
+  const [hasAvatar, setHasAvatar] = useState(!!avatarUrl);
   const subtitle = contact.ensName ?? `${contact.address.slice(0, 10)}…${contact.address.slice(-8)}`;
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
-
-  // Eagerly load ENS avatar for contacts with ENS names
-  useEffect(() => {
-    if (!contact.ensName) return;
-    let cancelled = false;
-    ENSService.getProfile(contact.ensName).then((p) => {
-      if (!cancelled && p?.avatar) setAvatar(p.avatar);
-    });
-    return () => { cancelled = true; };
-  }, [contact.ensName]);
 
   return (
     <Animated.View style={animatedStyle}>
@@ -794,8 +848,8 @@ function ContactRow({
           scale.value = withSpring(1, { damping: 20, stiffness: 400 });
         }}
       >
-        {avatar ? (
-          <Image source={{ uri: avatar }} style={styles.avatarImage} />
+        {hasAvatar && avatarUrl ? (
+          <Image source={{ uri: avatarUrl }} style={styles.avatarImage} onError={() => setHasAvatar(false)} />
         ) : (
           <View style={[styles.avatar, { backgroundColor: color }]}>
             <Text style={styles.avatarText}>
@@ -812,7 +866,6 @@ function ContactRow({
         </View>
 
         <View style={styles.rowRight}>
-          <LastActiveBadge address={contact.address} />
           <Ionicons name="chevron-forward" size={18} color="#374151" />
         </View>
       </TouchableOpacity>
@@ -1272,5 +1325,28 @@ const detailStyles = StyleSheet.create({
   },
   copyBtn: {
     paddingLeft: 12,
+  },
+  recordKeyBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minWidth: 60,
+    alignItems: "center" as const,
+  },
+  recordKeyText: {
+    fontSize: 11,
+    fontWeight: "600" as const,
+  },
+  recordKeyRaw: {
+    color: "#6B7280",
+    fontSize: 10,
+    fontFamily: "monospace",
+    marginBottom: 2,
+  },
+  recordValue: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "500" as const,
+    lineHeight: 18,
   },
 });

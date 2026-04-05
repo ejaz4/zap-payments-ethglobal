@@ -1,19 +1,26 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
 import {
-  AddressInput,
-  ApprovalModal,
-  Button,
-  ChainBadgeMini
+    AddressInput,
+    ApprovalModal,
+    Button,
+    ChainBadgeMini
 } from "@/components/ui";
 import {
-  NetworkSelector,
-  SOLANA_NETWORKS,
+    NetworkSelector,
+    SOLANA_NETWORKS,
 } from "@/components/ui/NetworkSelector";
 import { TokenInfo } from "@/config/tokens";
+import {
+    NATIVE_TOKEN_ADDRESS,
+    isUniswapSupported,
+} from "@/config/uniswap";
 import { ApiProvider } from "@/crypto/provider/api";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useFiatValue } from "@/hooks/use-fiat-value";
+import { useSwapExecution } from "@/hooks/use-swap-execution";
+import { useUniswapQuote } from "@/hooks/use-uniswap-quote";
 import { ERC20Service } from "@/services/erc20";
+import { PriceService } from "@/services/price";
 import { SecureStorage } from "@/services/storage";
 import { BalanceService, TransactionService } from "@/services/wallet";
 import { tintedBackground, tintedSurface, useAccentColor } from "@/store/appearance";
@@ -21,29 +28,30 @@ import { useContactByAddress, useContactsStore } from "@/store/contacts";
 import { useProviderStore } from "@/store/provider";
 import { useTokenStore } from "@/store/tokens";
 import {
-  TokenBalance,
-  getSolanaChainKey,
-  useNativeBalance,
-  useSelectedAccount,
-  useTokenBalances,
-  useWalletStore,
+    SOLANA_CHAIN_KEYS, TokenBalance,
+    getSolanaChainKey,
+    useNativeBalance,
+    useSelectedAccount,
+    useTokenBalances,
+    useWalletStore
 } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Alert,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -56,7 +64,7 @@ export default function SendScreen() {
   const accentColor = useAccentColor();
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const headerBg = tintedSurface(accentColor, 0.08, isLight ? "#FFFFFF" : "#111111", scheme);
   const panelBg = tintedSurface(accentColor, 0.11, isLight ? "#FFFFFF" : "#111111", scheme);
   const panelBorder = isLight ? "#D6E4DE" : "#24312C";
@@ -121,10 +129,11 @@ export default function SendScreen() {
   }, [isSolanaAccount, selectedAccount?.address, selectedApiNetworkId]);
 
   // Use chainId from params if provided, otherwise fall back to store's selectedChainId
+  const solanaChainIds = Object.values(SOLANA_CHAIN_KEYS) as number[];
   const selectedChainId = useMemo(() => {
     if (chainIdParam) {
       const parsed = parseInt(chainIdParam, 10);
-      if (!isNaN(parsed) && Object.values(ChainId).includes(parsed)) {
+      if (!isNaN(parsed) && (Object.values(ChainId).includes(parsed) || solanaChainIds.includes(parsed))) {
         return parsed as ChainId;
       }
     }
@@ -161,19 +170,92 @@ export default function SendScreen() {
   // Track if we've already auto-selected asset from params
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
 
+  // NFC cross-token conversion: when amount comes from NFC tap (amountParam),
+  // it's denominated in either the chain's native currency (no tokenAddress param)
+  // or a specific token (tokenAddress param, e.g. USDC). If the customer selects
+  // a different asset, auto-convert to the equivalent amount via price service.
+  const [nfcRequestedAmount] = useState<string | null>(amountParam || null);
+  const [isConverting, setIsConverting] = useState(false);
+  const [nfcEquivLabel, setNfcEquivLabel] = useState<string | null>(null);
+  // The symbol of the currency the NFC request is denominated in
+  const nfcRequestSymbol = useMemo(() => {
+    if (!addressParam || !amountParam) return null;
+    // If tokenAddress is in params, the amount is in that token's denomination
+    if (tokenAddress) {
+      // Try to find its symbol from configured tokens for the chain
+      const chainTokens = getTokensForChain(selectedChainId);
+      const found = chainTokens.find(
+        (t) => t.address.toLowerCase() === tokenAddress.toLowerCase(),
+      );
+      return found?.symbol ?? "TOKEN";
+    }
+    return networkConfig?.nativeCurrency.symbol ?? "ETH";
+  }, [addressParam, amountParam, tokenAddress, getTokensForChain, selectedChainId, networkConfig]);
+
+  useEffect(() => {
+    if (!nfcRequestedAmount || !addressParam) return; // Only for NFC-initiated transfers
+
+    // Check if the currently selected asset matches the NFC request denomination
+    const isExactMatch = tokenAddress
+      ? (selectedAsset.type === "token" && selectedAsset.token.address.toLowerCase() === tokenAddress.toLowerCase())
+      : (selectedAsset.type === "native");
+
+    if (isExactMatch) {
+      // Same currency — restore original amount, no conversion
+      setAmount(nfcRequestedAmount);
+      setNfcEquivLabel(null);
+      return;
+    }
+
+    // Different asset selected — convert via prices
+    const convert = async () => {
+      setIsConverting(true);
+      try {
+        // Price of the NFC-requested currency
+        const requestedPrice = tokenAddress
+          ? await PriceService.getPriceBySymbol(nfcRequestSymbol ?? "", "usd")
+          : await PriceService.getNativePrice(selectedChainId, "usd");
+
+        // Price of the customer's selected asset
+        const selectedPrice = selectedAsset.type === "native"
+          ? await PriceService.getNativePrice(selectedChainId, "usd")
+          : await PriceService.getPriceBySymbol(selectedAsset.token.symbol, "usd");
+
+        if (requestedPrice && selectedPrice && selectedPrice > 0) {
+          const requestedUsd = parseFloat(nfcRequestedAmount) * requestedPrice;
+          // Add 2% buffer so the merchant receives enough after slippage
+          const equivalent = (requestedUsd / selectedPrice) * 1.02;
+          const decimals = selectedAsset.type === "token"
+            ? Math.min(selectedAsset.token.decimals, 6)
+            : 6;
+          setAmount(equivalent.toFixed(decimals));
+          setNfcEquivLabel(`≈ ${nfcRequestedAmount} ${nfcRequestSymbol}`);
+        }
+      } catch (e) {
+        console.warn("[Transfer] Price conversion failed:", e);
+      } finally {
+        setIsConverting(false);
+      }
+    };
+
+    convert();
+  }, [selectedAsset, nfcRequestedAmount, addressParam, selectedChainId, tokenAddress, nfcRequestSymbol]);
+
   // Get available tokens with balances for the current chain
   const availableTokens = useMemo(() => {
     if (isSolanaAccount) {
-      // For Solana, use tokens already fetched from the API (stored in tokenBalances)
-      return tokenBalances.map((tb) => ({
-        token: {
-          address: tb.address,
-          symbol: tb.symbol,
-          name: tb.name,
-          decimals: tb.decimals,
-        } as any,
-        balance: tb,
-      }));
+      // Merge configured Solana tokens with live balances from the API.
+      // This ensures tokens like PYUSD appear in the picker even with 0 balance.
+      const networkId = selectedApiNetworkId ?? "dynamic-mainnet";
+      const chainKey = getSolanaChainKey(networkId);
+      const configTokens = getTokensForChain(chainKey);
+
+      return configTokens.map((token) => {
+        const balance = tokenBalances.find(
+          (tb) => tb.address.toLowerCase() === token.address.toLowerCase(),
+        );
+        return { token, balance };
+      });
     }
     const tokens = getTokensForChain(selectedChainId);
     return tokens.map((token) => {
@@ -184,9 +266,11 @@ export default function SendScreen() {
       );
       return { token, balance };
     });
-  }, [selectedChainId, tokenBalances, getTokensForChain, isSolanaAccount]);
+  }, [selectedChainId, tokenBalances, getTokensForChain, isSolanaAccount, selectedApiNetworkId]);
 
-  // Auto-select asset from route params on mount
+  // Auto-select asset from route params on mount.
+  // For NFC payments: prefer the requested token if the customer has enough.
+  // If not, fall back to any token with sufficient balance (stables first).
   useEffect(() => {
     if (hasAutoSelected) return;
 
@@ -196,18 +280,64 @@ export default function SendScreen() {
           token.address.toLowerCase() === tokenAddress.toLowerCase(),
       );
       if (foundToken) {
+        const bal = parseFloat(foundToken.balance?.balanceFormatted || "0");
+        const requested = parseFloat(amountParam || "0");
+        if (bal >= requested) {
+          // Requested token has enough balance — use it
+          setSelectedAsset({
+            type: "token",
+            token: foundToken.token,
+            balance: foundToken.balance,
+          });
+          setHasAutoSelected(true);
+          return;
+        }
+      }
+
+      // Requested token missing or insufficient — find best alternative.
+      // Prefer native first, then tokens with the highest balance.
+      if (addressParam && amountParam) {
+        const nativeBal = parseFloat(nativeBalance || "0");
+        // For native: the NFC amount is in the requested token, not native,
+        // so we can't directly compare — just use native if it has any value.
+        if (nativeBal > 0.001) {
+          // Native has funds — the conversion effect will auto-compute the amount
+          setSelectedAsset({ type: "native" });
+          setHasAutoSelected(true);
+          return;
+        }
+
+        // Find any token with a non-zero balance
+        const withBalance = availableTokens
+          .filter(({ balance }) => parseFloat(balance?.balanceFormatted || "0") > 0)
+          .sort((a, b) =>
+            parseFloat(b.balance?.balanceFormatted || "0") - parseFloat(a.balance?.balanceFormatted || "0"),
+          );
+        if (withBalance.length > 0) {
+          setSelectedAsset({
+            type: "token",
+            token: withBalance[0].token,
+            balance: withBalance[0].balance,
+          });
+          setHasAutoSelected(true);
+          return;
+        }
+      }
+
+      // Fall back to the requested token even with 0 balance
+      if (foundToken) {
         setSelectedAsset({
           type: "token",
           token: foundToken.token,
           balance: foundToken.balance,
         });
-        setHasAutoSelected(true);
       }
+      setHasAutoSelected(true);
     } else if (!tokenAddress) {
-      // Native token was selected
+      // Native token was selected (or no token specified)
       setHasAutoSelected(true);
     }
-  }, [tokenAddress, availableTokens, hasAutoSelected]);
+  }, [tokenAddress, availableTokens, hasAutoSelected, amountParam, addressParam, nativeBalance]);
 
   // Get current balance based on selected asset
   const currentBalance = useMemo(() => {
@@ -218,10 +348,11 @@ export default function SendScreen() {
       (tb) =>
         tb.address.toLowerCase() ===
           selectedAsset.token.address.toLowerCase() &&
-        tb.chainId === selectedChainId,
+        // For Solana, tokenBalances is already scoped to the correct chain key
+        (isSolanaAccount || tb.chainId === selectedChainId),
     );
     return tokenBalance?.balanceFormatted || "0";
-  }, [selectedAsset, nativeBalance, tokenBalances, selectedChainId]);
+  }, [selectedAsset, nativeBalance, tokenBalances, selectedChainId, isSolanaAccount]);
 
   const currentSymbol = useMemo(() => {
     if (selectedAsset.type === "native") {
@@ -258,13 +389,10 @@ export default function SendScreen() {
       return;
     }
 
-    // For Solana, skip local balance check — the API validates funds
-    if (!isSolanaAccount) {
-      const balance = parseFloat(currentBalance);
-      if (num > balance) {
-        setAmountError("Insufficient balance");
-        return;
-      }
+    const balance = parseFloat(currentBalance);
+    if (num > balance) {
+      setAmountError("Insufficient balance");
+      return;
     }
 
     setAmountError(null);
@@ -376,18 +504,24 @@ export default function SendScreen() {
               // Record in transaction history — mark as pending until confirmed
               const chainKey = getSolanaChainKey(networkId);
               const txHash = result.txHash ?? `sol-${Date.now()}`;
-              useWalletStore.getState().addTransaction(selectedAccount.address, {
+              const txRecord = {
                 hash: txHash,
                 from: selectedAccount.address,
                 to: resolvedAddress,
                 value: amount,
                 chainId: chainKey,
                 timestamp: Date.now(),
-                status: result.status === "confirmed" ? "confirmed" : "pending",
-                type: "send",
+                status: (result.status === "confirmed" ? "confirmed" : "pending") as "confirmed" | "pending",
+                type: "send" as const,
                 tokenSymbol: isToken && selectedAsset.type === "token" ? selectedAsset.token.symbol : "SOL",
                 tokenAddress: tokenRef,
-              });
+              };
+              useWalletStore.getState().addTransaction(selectedAccount.address, txRecord);
+
+              // Track pending Solana txs so the poller picks them up
+              if (txRecord.status === "pending") {
+                useWalletStore.getState().addPendingTransaction(txRecord);
+              }
 
               // Refresh balances after send
               BalanceService.forceRefreshBalances();
@@ -507,8 +641,87 @@ export default function SendScreen() {
     setAmountError(null);
   };
 
+  // ─── Swap-and-Send (EVM only, Uniswap-supported chains) ───
+  const chainSupportsSwap = !isSolanaAccount && isUniswapSupported(effectiveChainId);
+
+  // Detect if user lacks the selected token but could swap from another
+  const needsSwap = useMemo(() => {
+    if (!chainSupportsSwap || !amount || parseFloat(amount) <= 0) return false;
+    const bal = parseFloat(currentBalance);
+    return bal < parseFloat(amount);
+  }, [chainSupportsSwap, amount, currentBalance]);
+
+  // The token the user wants to send — resolve its swap address
+  const sendTokenSwapAddress = useMemo(() => {
+    if (selectedAsset.type === "native") return NATIVE_TOKEN_ADDRESS;
+    return selectedAsset.token.address;
+  }, [selectedAsset]);
+  const sendTokenDecimals = useMemo(() => {
+    if (selectedAsset.type === "native") return effectiveNetworkConfig?.nativeCurrency.decimals || 18;
+    return selectedAsset.token.decimals;
+  }, [selectedAsset, effectiveNetworkConfig]);
+
+  // Source token for swap-and-send (swap FROM this token)
+  const [swapFromAsset, setSwapFromAsset] = useState<SelectedAsset>({ type: "native" });
+  const swapFromAddress = useMemo(() => {
+    if (swapFromAsset.type === "native") return NATIVE_TOKEN_ADDRESS;
+    return swapFromAsset.token.address;
+  }, [swapFromAsset]);
+  const swapFromDecimals = useMemo(() => {
+    if (swapFromAsset.type === "native") return effectiveNetworkConfig?.nativeCurrency.decimals || 18;
+    return swapFromAsset.token.decimals;
+  }, [swapFromAsset, effectiveNetworkConfig]);
+  const swapFromSymbol = useMemo(() => {
+    if (swapFromAsset.type === "native") return effectiveNetworkConfig?.nativeCurrency.symbol || "ETH";
+    return swapFromAsset.token.symbol;
+  }, [swapFromAsset, effectiveNetworkConfig]);
+
+  // EXACT_OUTPUT quote — user specifies how much to deliver, API returns how much to swap
+  const {
+    quote: swapQuote,
+    isLoading: swapQuoteLoading,
+    error: swapQuoteError,
+  } = useUniswapQuote(
+    swapFromAddress,
+    swapFromDecimals,
+    sendTokenSwapAddress,
+    sendTokenDecimals,
+    needsSwap ? amount : "",
+    effectiveChainId,
+    selectedAccount?.address,
+    "payment", // deterministic routing for sends
+    "EXACT_OUTPUT",
+    resolvedAddress || undefined,
+  );
+
+  const {
+    executeSwap: executeSwapSend,
+    step: swapSendStep,
+    txHash: swapSendTxHash,
+    error: swapSendError,
+    reset: resetSwapSend,
+  } = useSwapExecution();
+
+  const handleSwapAndSend = () => {
+    if (!swapQuote || !selectedAccount) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    executeSwapSend(swapQuote, selectedAccount.address);
+  };
+
+  // After swap-and-send completes, refresh balances
+  useEffect(() => {
+    if (swapSendStep === "done") {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      BalanceService.forceRefreshBalances();
+    }
+  }, [swapSendStep]);
+
+  const isSwapping = ["checking-approval", "approving", "signing-permit", "building-swap", "swapping"].includes(swapSendStep);
+  const swapGasUsd = swapQuote?.gasFeeUSD ? `$${parseFloat(swapQuote.gasFeeUSD).toFixed(4)}` : null;
+
   // All Solana wallets are Dynamic-managed (created via the API); no unmanaged gate needed.
-  const canSend = resolvedAddress && amount && !amountError;
+  const canSend = resolvedAddress && amount && !amountError && !needsSwap;
+  const canSwapSend = needsSwap && resolvedAddress && swapQuote && !isSwapping && swapSendStep !== "done";
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
@@ -616,6 +829,11 @@ export default function SendScreen() {
             </TouchableOpacity>
           </View>
           <Text style={[styles.amountCardFiat, { color: panelMuted }]}>{fiatAmount ? `≈ ${fiatAmount}` : " "}</Text>
+          {nfcEquivLabel && (
+            <Text style={[styles.amountCardFiat, { color: accentColor, fontSize: 12, marginTop: 2 }]}>
+              {isConverting ? "Converting..." : nfcEquivLabel}
+            </Text>
+          )}
           {amountError && <Text style={styles.amountCardError}>{amountError}</Text>}
         </View>
 
@@ -643,6 +861,103 @@ export default function SendScreen() {
           </View>
         )}
 
+        {/* ─── Swap & Send Panel ─── */}
+        {needsSwap && chainSupportsSwap && !isSolanaAccount && (
+          <View style={styles.swapSendPanel}>
+            <View style={styles.swapSendHeader}>
+              <Ionicons name="swap-horizontal" size={16} color="#F59E0B" />
+              <Text style={styles.swapSendTitle}>Swap & Send</Text>
+            </View>
+            <Text style={styles.swapSendDesc}>
+              You don't have enough {currentSymbol}. We'll swap from {swapFromSymbol} and send directly to the recipient.
+            </Text>
+
+            {/* Source token info */}
+            <View style={styles.swapSendQuoteRow}>
+              <Text style={styles.swapSendQuoteLabel}>Swap from</Text>
+              <TouchableOpacity
+                style={styles.swapSendTokenPill}
+                onPress={() => setShowAssetPicker(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.swapSendTokenText}>{swapFromSymbol}</Text>
+                <Ionicons name="chevron-down" size={14} color="#9CA3AF" />
+              </TouchableOpacity>
+            </View>
+
+            {swapQuoteLoading && (
+              <Text style={styles.swapSendLoadingText}>Getting swap quote...</Text>
+            )}
+
+            {swapQuoteError && !swapQuoteLoading && (
+              <Text style={styles.swapSendErrorText}>{swapQuoteError}</Text>
+            )}
+
+            {swapQuote && (
+              <View style={styles.swapSendDetails}>
+                <View style={styles.swapSendDetailRow}>
+                  <Text style={styles.swapSendDetailLabel}>You swap</Text>
+                  <Text style={styles.swapSendDetailValue}>
+                    {swapQuote.formattedIn} {swapFromSymbol}
+                  </Text>
+                </View>
+                <View style={styles.swapSendDetailRow}>
+                  <Text style={styles.swapSendDetailLabel}>Recipient gets</Text>
+                  <Text style={styles.swapSendDetailValue}>
+                    {swapQuote.formattedOut} {currentSymbol}
+                  </Text>
+                </View>
+                <View style={styles.swapSendDetailRow}>
+                  <Text style={styles.swapSendDetailLabel}>Routing</Text>
+                  <Text style={styles.swapSendDetailValue}>{swapQuote.routing}</Text>
+                </View>
+                {swapGasUsd && (
+                  <View style={styles.swapSendDetailRow}>
+                    <Text style={styles.swapSendDetailLabel}>Gas</Text>
+                    <Text style={styles.swapSendDetailValue}>{swapGasUsd}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Swap status */}
+            {swapSendStep !== "idle" && swapSendStep !== "done" && (
+              <View style={styles.swapSendStatusRow}>
+                <ActivityIndicator size="small" color={accentColor} />
+                <Text style={styles.swapSendStatusText}>
+                  {swapSendStep === "checking-approval" ? "Checking approval..." :
+                   swapSendStep === "approving" ? "Approving token..." :
+                   swapSendStep === "signing-permit" ? "Sign permit..." :
+                   swapSendStep === "building-swap" ? "Building swap..." :
+                   swapSendStep === "swapping" ? "Confirming..." : swapSendStep}
+                </Text>
+              </View>
+            )}
+
+            {swapSendError && (
+              <Text style={styles.swapSendErrorText}>{swapSendError}</Text>
+            )}
+
+            {swapSendStep === "done" && swapSendTxHash && (
+              <View style={styles.swapSendSuccessRow}>
+                <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+                <Text style={styles.swapSendSuccessText}>
+                  Swap & Send complete! Tx: {swapSendTxHash.slice(0, 10)}...
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Insufficient balance hint (non-Uniswap chains) */}
+        {needsSwap && !chainSupportsSwap && !isSolanaAccount && (
+          <View style={styles.swapSendPanel}>
+            <Text style={styles.swapSendDesc}>
+              Insufficient {currentSymbol} balance. Swap is not available on this chain.
+            </Text>
+          </View>
+        )}
+
         {/* Save to contacts button - show after resolving a new address */}
         {resolvedAddress && !existingContact && (
           <TouchableOpacity
@@ -660,12 +975,45 @@ export default function SendScreen() {
       </KeyboardAvoidingView>
 
       <View style={styles.footer}>
-        <Button
-          title="Send"
-          onPress={handleSend}
-          loading={isLoading}
-          disabled={!canSend}
-        />
+        {needsSwap && chainSupportsSwap ? (
+          <TouchableOpacity
+            style={[
+              styles.swapSendButton,
+              { backgroundColor: canSwapSend ? accentColor : "#374151" },
+            ]}
+            onPress={swapSendStep === "done" ? () => resetSwapSend() : handleSwapAndSend}
+            disabled={!canSwapSend && swapSendStep !== "done"}
+            activeOpacity={0.8}
+          >
+            {isSwapping ? (
+              <ActivityIndicator size="small" color="#FFF" />
+            ) : (
+              <>
+                <Ionicons
+                  name={swapSendStep === "done" ? "checkmark-circle" : "swap-horizontal"}
+                  size={18}
+                  color="#FFF"
+                />
+                <Text style={styles.swapSendButtonText}>
+                  {swapSendStep === "done"
+                    ? "Done!"
+                    : swapQuoteLoading
+                    ? "Getting quote..."
+                    : swapQuote
+                    ? `Swap & Send ${currentSymbol}`
+                    : "Enter details"}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <Button
+            title="Send"
+            onPress={handleSend}
+            loading={isLoading}
+            disabled={!canSend}
+          />
+        )}
       </View>
 
       {/* Asset Picker Modal */}
@@ -1267,5 +1615,115 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "600",
+  },
+  // ─── Swap & Send styles ───
+  swapSendPanel: {
+    backgroundColor: "#1C1A0F",
+    borderWidth: 1,
+    borderColor: "#F59E0B30",
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 12,
+    gap: 10,
+  },
+  swapSendHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  swapSendTitle: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  swapSendDesc: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  swapSendQuoteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  swapSendQuoteLabel: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  swapSendTokenPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#374151",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  swapSendTokenText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  swapSendLoadingText: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    fontStyle: "italic",
+  },
+  swapSendErrorText: {
+    color: "#EF4444",
+    fontSize: 12,
+  },
+  swapSendDetails: {
+    backgroundColor: "#141B1780",
+    borderRadius: 10,
+    padding: 10,
+    gap: 6,
+  },
+  swapSendDetailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  swapSendDetailLabel: {
+    color: "#9CA3AF",
+    fontSize: 11,
+  },
+  swapSendDetailValue: {
+    color: "#E5E7EB",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  swapSendStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  swapSendStatusText: {
+    color: "#9CA3AF",
+    fontSize: 12,
+  },
+  swapSendSuccessRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  swapSendSuccessText: {
+    color: "#10B981",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  swapSendButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 16,
+  },
+  swapSendButtonText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });

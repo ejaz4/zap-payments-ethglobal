@@ -5,9 +5,9 @@ import { useENSName } from "@/hooks/use-ens";
 import { WalletService } from "@/services/wallet";
 import { tintedBackground, useAccentColor } from "@/store/appearance";
 import {
-  CARD_BACKGROUNDS,
-  CardBackground,
-  useWalletStore,
+    CARD_BACKGROUNDS,
+    CardBackground,
+    useWalletStore,
 } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -15,15 +15,15 @@ import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
-  Image,
-  ImageSourcePropType,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    Image,
+    ImageSourcePropType,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -52,7 +52,7 @@ export default function AccountDetailScreen() {
   const accentColor = useAccentColor();
   const colorScheme = useColorScheme() ?? "dark";
   const isLight = colorScheme === "light";
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const textPrimary = isLight ? "#11181C" : "#FFFFFF";
   const textMuted = isLight ? "#64748B" : "#6B7280";
   const textSection = isLight ? "#475569" : "#9CA3AF";

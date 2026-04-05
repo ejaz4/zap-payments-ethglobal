@@ -99,7 +99,7 @@ export function NetworkSelector({
   onClose,
 }: NetworkSelectorProps) {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
   const panelBorder = isLight ? "#D5E2DC" : "#1E2E29";

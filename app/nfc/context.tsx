@@ -298,8 +298,49 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
     console.log("[NFC] Navigating to pay screen, type:", payment.type);
     setLastPayment(payment);
 
-    if (payment.type === "zap-pay" && payment.amount && selectedAccount) {
-      const autoPayLimit = selectedAccount.autoPayLimit;
+    // -----------------------------------------------------------------------
+    // Chain / wallet switching — ensure the sender is on the right network
+    // -----------------------------------------------------------------------
+    const store = useWalletStore.getState();
+    const isSolanaRequest = payment.network === "solana" ||
+      Object.values(SOLANA_CHAIN_KEYS).includes(payment.chainId as ChainId);
+    const currentIsSolana = selectedAccount?.accountType === "solana";
+
+    if (isSolanaRequest !== currentIsSolana) {
+      // Need to switch wallet type (EVM↔Solana)
+      const targetType = isSolanaRequest ? "solana" : "evm";
+      const matchingAccountIdx = store.accounts.findIndex(
+        (a) => (a.accountType ?? "evm") === targetType,
+      );
+      if (matchingAccountIdx >= 0) {
+        console.log(`[NFC] Switching to ${targetType} wallet (index ${matchingAccountIdx})`);
+        store.setSelectedAccountIndex(matchingAccountIdx);
+      } else {
+        Alert.alert(
+          "No wallet found",
+          `This payment requires a ${isSolanaRequest ? "Solana" : "EVM"} wallet. Create one in Settings.`,
+        );
+        return;
+      }
+    }
+
+    // For EVM requests, switch to the correct chain if different
+    if (!isSolanaRequest && payment.chainId !== store.selectedChainId) {
+      const knownEvm = payment.chainId in DEFAULT_NETWORKS;
+      if (knownEvm) {
+        console.log("[NFC] Switching EVM chain:", store.selectedChainId, "→", payment.chainId);
+        store.setSelectedChainId(payment.chainId as ChainId);
+      }
+    }
+
+    // Re-read selected account after potential switch
+    const activeAccount = store.accounts[store.selectedAccountIndex] ?? selectedAccount;
+
+    // -----------------------------------------------------------------------
+    // Auto-pay (native currency only, within limit)
+    // -----------------------------------------------------------------------
+    if (payment.type === "zap-pay" && payment.amount && activeAccount) {
+      const autoPayLimit = activeAccount.autoPayLimit;
       const amountNum = parseFloat(payment.amount);
       const limitNum = autoPayLimit ? parseFloat(autoPayLimit) : null;
 
@@ -310,7 +351,7 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
         setAutoPayOverlay("sending");
         try {
           const result = await TransactionService.sendNative(
-            selectedAccount.address,
+            activeAccount.address,
             payment.address,
             payment.amount,
             payment.chainId as ChainId,

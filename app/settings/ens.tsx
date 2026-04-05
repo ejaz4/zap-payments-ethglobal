@@ -1,8 +1,8 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { ChainId } from "@/app/profiles/client";
 import { useENSName, useENSProfile } from "@/hooks/use-ens";
 import { ENSService } from "@/services/ens";
 import { WalletService } from "@/services/wallet";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedAccount } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -10,15 +10,15 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React, { useCallback, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Image,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -51,7 +51,7 @@ const EDITABLE_TEXT_RECORDS = [
 
 export default function ENSManagementScreen() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const router = useRouter();
   const account = useSelectedAccount();
   const ensName = useENSName(account?.address, ChainId.mainnet);

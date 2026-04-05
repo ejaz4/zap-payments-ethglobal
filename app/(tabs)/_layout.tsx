@@ -1,4 +1,5 @@
 import { HapticTab } from "@/components/haptic-tab";
+import { useTxStatusPoller } from "@/hooks/use-tx-status-poller";
 import { hexToRgba, tintedSurface, useAccentColor } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
@@ -7,6 +8,8 @@ import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabLayout() {
+  // Poll pending Solana tx statuses in the background
+  useTxStatusPoller();
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, 8);
   const accentColor = useAccentColor();

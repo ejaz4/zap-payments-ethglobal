@@ -24,7 +24,7 @@ export default function ActivityScreen() {
   const accentColor = useAccentColor();
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const textPrimary = isLight ? "#11181C" : "#FFFFFF";
   const textMuted = isLight ? "#64748B" : "#6B7280";
   const cardBg = isLight ? "#FFFFFF" : "#1E2E29";

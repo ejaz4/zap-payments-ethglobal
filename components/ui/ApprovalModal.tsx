@@ -41,7 +41,7 @@ export function ApprovalModal({
   chainId,
 }: ApprovalModalProps) {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
   const titleColor = isLight ? "#0F172A" : "#FFFFFF";

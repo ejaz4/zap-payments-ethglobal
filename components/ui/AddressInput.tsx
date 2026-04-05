@@ -886,21 +886,19 @@ function ContactAvatar({
   ensName: string;
   name: string;
 }) {
-  const [avatar, setAvatar] = useState<string | null>(null);
+  // Use the metadata service URL directly — it handles IPFS, NFT refs, and direct URLs
+  const avatarUrl = ENSService.avatarUrl(ensName);
+  const [hasAvatar, setHasAvatar] = useState(true);
   const fallback = initialsFromName(name);
 
-  useEffect(() => {
-    let cancelled = false;
-    ENSService.getProfile(ensName).then((profile) => {
-      if (!cancelled) setAvatar(profile?.avatar ?? null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ensName]);
-
-  if (avatar) {
-    return <Image source={{ uri: avatar }} style={styles.contactAvatarImage} />;
+  if (hasAvatar) {
+    return (
+      <Image
+        source={{ uri: avatarUrl }}
+        style={styles.contactAvatarImage}
+        onError={() => setHasAvatar(false)}
+      />
+    );
   }
 
   return (

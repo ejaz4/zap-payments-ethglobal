@@ -1,9 +1,9 @@
-import { useAccentColor, tintedBackground } from "@/store/appearance";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { Stack } from "expo-router";
 
 export default function SettingsLayout() {
   const accentColor = useAccentColor();
-  const bg = tintedBackground(accentColor);
+  const bg = tintedBackground("#000000");
 
   return (
     <Stack

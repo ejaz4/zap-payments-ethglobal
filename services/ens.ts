@@ -9,7 +9,7 @@
  * reliable React Native / Hermes compatibility.
  */
 
-import { ChainId, DEFAULT_NETWORKS, EthersClient } from "@/app/profiles/client";
+import { ChainId, EthersClient } from "@/app/profiles/client";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createPublicClient, http } from "viem";
 import { mainnet } from "viem/chains";
@@ -77,6 +77,15 @@ const SOCIAL_KEYS = [
   "com.reddit",
 ] as const;
 
+/** All text record keys we attempt to fetch for a full profile */
+const ALL_TEXT_KEYS = [
+  "avatar", "description", "header", "display", "name",
+  "location", "keywords", "notice",
+  ...SOCIAL_KEYS,
+  "com.linkedin", "com.instagram", "com.youtube",
+  "io.keybase", "xyz.farcaster",
+] as const;
+
 export interface ENSSocial {
   platform: "twitter" | "github" | "website" | "email" | "telegram" | "discord" | "reddit";
   handle: string;
@@ -102,20 +111,34 @@ export interface ENSProfile {
   socials: ENSSocial[];
   addresses: ENSChainAddress[];
   solanaAddress?: string;
+  /** All non-null text records keyed by their ENS key (e.g. "com.twitter", "email") */
+  textRecords: Record<string, string>;
 }
 
 // ─── Viem client for ENS ─────────────────────────────────────────────────────
 
 const ensMainnetClient = createPublicClient({
   chain: mainnet,
-  transport: http(DEFAULT_NETWORKS[ChainId.mainnet].rpcUrl),
+  transport: http("https://ethereum-rpc.publicnode.com", { batch: { wait: 50 } }),
 });
 
 // ─── Persistent cache ─────────────────────────────────────────────────────────
 
-const FORWARD_TTL   = 60 * 60 * 1000;  // 1 hour
-const REVERSE_TTL   = 60 * 60 * 1000;  // 1 hour
-const PROFILE_TTL   = 60 * 60 * 1000;  // 1 hour
+const FORWARD_TTL   = 24 * 60 * 60 * 1000;  // 24 hours
+const REVERSE_TTL   = 24 * 60 * 60 * 1000;  // 24 hours
+const PROFILE_TTL   = 12 * 60 * 60 * 1000;  // 12 hours
+const ERROR_TTL     = 5 * 60 * 1000;          // 5 min — avoid hammering on failures
+
+// One-time wipe of stale caches from the old broken RPC endpoints.
+// Safe to remove this block after one release cycle.
+const ENS_CACHE_VERSION_KEY = "ens_cache_version";
+const ENS_CACHE_VERSION = "2"; // bump when RPC changes
+AsyncStorage.getItem(ENS_CACHE_VERSION_KEY).then((v) => {
+  if (v !== ENS_CACHE_VERSION) {
+    AsyncStorage.multiRemove(["ens_cache_forward", "ens_cache_reverse", "ens_cache_profile"]).catch(() => {});
+    AsyncStorage.setItem(ENS_CACHE_VERSION_KEY, ENS_CACHE_VERSION).catch(() => {});
+  }
+}).catch(() => {});
 
 const STORAGE_KEY_FORWARD  = "ens_cache_forward";
 const STORAGE_KEY_REVERSE  = "ens_cache_reverse";
@@ -170,6 +193,29 @@ const inFlightForward = new Map<string, Promise<string | null>>();
 const inFlightReverse = new Map<string, Promise<string | null>>();
 const inFlightProfile = new Map<string, Promise<ENSProfile | null>>();
 
+// ─── Concurrency limiter ───────────────────────────────────���─────────────────
+// Prevents hammering the RPC when many components mount at once.
+
+const MAX_CONCURRENT = 2;
+let activeCalls = 0;
+const waitQueue: Array<() => void> = [];
+
+function acquireSlot(): Promise<void> {
+  if (activeCalls < MAX_CONCURRENT) {
+    activeCalls++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    waitQueue.push(() => { activeCalls++; resolve(); });
+  });
+}
+
+function releaseSlot() {
+  activeCalls--;
+  const next = waitQueue.shift();
+  if (next) next();
+}
+
 // ─── Key helpers ──────────────────────────────────────────────────────────────
 
 function forwardKey(name: string, chainId: ChainId) {
@@ -203,6 +249,7 @@ export class ENSService {
     if (inFlightForward.has(key)) return inFlightForward.get(key)!;
 
     const promise = (async (): Promise<string | null> => {
+      await acquireSlot();
       try {
         const normalizedName = normalize(name);
         let result: string | null = null;
@@ -226,8 +273,10 @@ export class ENSService {
         return result;
       } catch (err) {
         console.error("[ENSService]: Failed to resolve name:", name, err);
+        forwardCache.set(key, { value: null, expiresAt: Date.now() + ERROR_TTL });
         return null;
       } finally {
+        releaseSlot();
         inFlightForward.delete(key);
       }
     })();
@@ -255,6 +304,7 @@ export class ENSService {
     if (inFlightReverse.has(key)) return inFlightReverse.get(key)!;
 
     const promise = (async (): Promise<string | null> => {
+      await acquireSlot();
       try {
         const value = await getEnsName(ensMainnetClient, {
           address: address as `0x${string}`,
@@ -265,8 +315,10 @@ export class ENSService {
         return result;
       } catch (err) {
         console.error("[ENSService]: Failed to reverse-lookup address:", address, err);
+        reverseCache.set(key, { value: null, expiresAt: Date.now() + ERROR_TTL });
         return null;
       } finally {
+        releaseSlot();
         inFlightReverse.delete(key);
       }
     })();
@@ -291,6 +343,7 @@ export class ENSService {
     if (inFlightProfile.has(key)) return inFlightProfile.get(key)!;
 
     const promise = (async (): Promise<ENSProfile | null> => {
+      await acquireSlot();
       try {
         const normalizedName = normalize(ensName);
 
@@ -299,12 +352,8 @@ export class ENSService {
         if (!primaryAddress) return null;
 
         // Fetch text records, multi-chain addresses, and Solana address in parallel
-        const textKeys: string[] = [
-          "avatar", "description", "header", "display", "name",
-          "location", "keywords", "notice",
-          ...SOCIAL_KEYS,
-        ];
-        const [textResults, chainAddresses, solanaResult] = await Promise.all([
+        const textKeys: string[] = [...ALL_TEXT_KEYS];
+        const [textResults, chainAddresses, solanaResult, btcResult] = await Promise.all([
           Promise.allSettled(
             textKeys.map((k) =>
               getEnsText(ensMainnetClient, { name: normalizedName, key: k }).catch(() => null),
@@ -331,6 +380,9 @@ export class ENSService {
           // Solana address via SLIP-44 coin type 501
           getEnsAddress(ensMainnetClient, { name: normalizedName, coinType: SOLANA_COIN_TYPE as any })
             .catch(() => null),
+          // BTC address via SLIP-44 coin type 0
+          getEnsAddress(ensMainnetClient, { name: normalizedName, coinType: 0n as any })
+            .catch(() => null),
         ]);
 
         // Extract text values
@@ -340,7 +392,17 @@ export class ENSService {
           textMap[k] = r.status === "fulfilled" ? (r.value ?? null) : null;
         });
 
-        const avatar = textMap["avatar"] ?? undefined;
+        // Build textRecords: only non-null values
+        const textRecords: Record<string, string> = {};
+        for (const [k, v] of Object.entries(textMap)) {
+          if (v) textRecords[k] = v;
+        }
+
+        // Use ENS metadata service for avatar URL — handles IPFS, NFT refs, and direct URLs
+        const rawAvatar = textMap["avatar"];
+        const avatar = rawAvatar
+          ? `https://metadata.ens.domains/mainnet/avatar/${normalizedName}`
+          : undefined;
         const description = textMap["description"] ?? undefined;
         const header = textMap["header"] ?? undefined;
         const displayName = textMap["display"] ?? textMap["name"] ?? undefined;
@@ -397,6 +459,12 @@ export class ENSService {
           addresses.push({ chainId: "solana", chainName: "Solana", address: solanaAddr });
         }
 
+        // Add BTC address if found
+        const btcAddr = btcResult ?? null;
+        if (btcAddr) {
+          addresses.push({ chainId: "btc" as any, chainName: "Bitcoin", address: btcAddr });
+        }
+
         const profile: ENSProfile = {
           name: ensName,
           address: primaryAddress,
@@ -410,6 +478,7 @@ export class ENSService {
           socials,
           addresses,
           solanaAddress: solanaAddr ?? undefined,
+          textRecords,
         };
 
         profileCache.set(key, { value: profile, expiresAt: Date.now() + PROFILE_TTL });
@@ -417,8 +486,10 @@ export class ENSService {
         return profile;
       } catch (err) {
         console.error("[ENSService]: Failed to fetch profile for:", ensName, err);
+        profileCache.set(key, { value: null, expiresAt: Date.now() + ERROR_TTL });
         return null;
       } finally {
+        releaseSlot();
         inFlightProfile.delete(key);
       }
     })();
@@ -475,6 +546,16 @@ export class ENSService {
   }
 
   /**
+   * Clear all in-memory ENS caches.
+   * Useful after switching RPCs or recovering from errors.
+   */
+  static clearCache() {
+    forwardCache.clear();
+    reverseCache.clear();
+    profileCache.clear();
+  }
+
+  /**
    * Parse an ENS interoperable name (ERC-7828) like "vitalik.eth@base" or "alice@optimism".
    */
   static parseInteropName(
@@ -492,6 +573,14 @@ export class ENSService {
 
     const name = namePart.includes(".") ? namePart : `${namePart}.eth`;
     return { name, chainId };
+  }
+
+  /**
+   * Returns the ENS metadata service avatar URL for a name.
+   * This handles all avatar formats: direct URLs, IPFS, NFT references.
+   */
+  static avatarUrl(ensName: string): string {
+    return `https://metadata.ens.domains/mainnet/avatar/${ensName}`;
   }
 
   /** True if a string looks like it could be an ENS name (contains a dot). */

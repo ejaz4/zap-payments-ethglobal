@@ -387,7 +387,7 @@ export const useSelectedChainId = () =>
  */
 export const SOLANA_CHAIN_KEYS: Record<string, ChainId> = {
   "dynamic-mainnet": 999001 as ChainId,
-  "dynamic-testnet": 999002 as ChainId,
+  "dynamic-testnet": ChainId.solanaDevnet,
 };
 
 /** All Solana networkIds in display order */
