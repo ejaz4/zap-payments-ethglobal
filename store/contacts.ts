@@ -9,7 +9,10 @@ import { createJSONStorage, persist } from "zustand/middleware";
 export interface Contact {
   id: string;
   name: string;
+  /** Resolved 0x address */
   address: string;
+  /** Original ENS name if the contact was added via ENS (e.g. "vitalik.eth") */
+  ensName?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -25,10 +28,10 @@ interface ContactsState {
  * Contacts store actions
  */
 interface ContactsActions {
-  addContact: (name: string, address: string) => Contact;
+  addContact: (name: string, address: string, ensName?: string) => Contact;
   updateContact: (
     id: string,
-    updates: Partial<Pick<Contact, "name" | "address">>,
+    updates: Partial<Pick<Contact, "name" | "address" | "ensName">>,
   ) => void;
   removeContact: (id: string) => void;
   getContactByAddress: (address: string) => Contact | undefined;
@@ -43,7 +46,7 @@ export const useContactsStore = create<ContactsState & ContactsActions>()(
     (set, get) => ({
       contacts: [],
 
-      addContact: (name: string, address: string) => {
+      addContact: (name: string, address: string, ensName?: string) => {
         const normalizedAddress = address.toLowerCase();
 
         // Check if contact with this address already exists
@@ -53,14 +56,15 @@ export const useContactsStore = create<ContactsState & ContactsActions>()(
 
         if (existing) {
           // Update existing contact
-          get().updateContact(existing.id, { name, address });
-          return { ...existing, name, address, updatedAt: Date.now() };
+          get().updateContact(existing.id, { name, address, ensName });
+          return { ...existing, name, address, ensName, updatedAt: Date.now() };
         }
 
         const newContact: Contact = {
           id: `contact_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
           name: name.trim(),
           address: address,
+          ...(ensName ? { ensName } : {}),
           createdAt: Date.now(),
           updatedAt: Date.now(),
         };
@@ -74,7 +78,7 @@ export const useContactsStore = create<ContactsState & ContactsActions>()(
 
       updateContact: (
         id: string,
-        updates: Partial<Pick<Contact, "name" | "address">>,
+        updates: Partial<Pick<Contact, "name" | "address" | "ensName">>,
       ) => {
         set((state) => ({
           contacts: state.contacts.map((contact) =>

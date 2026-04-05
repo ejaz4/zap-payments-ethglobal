@@ -1,5 +1,14 @@
 import { DEFAULT_NETWORKS, EthersClient } from "@/app/profiles/client";
-import { Transaction, useWalletStore } from "@/store/wallet";
+import { useNativePrice } from "@/hooks/use-prices";
+import { PriceService } from "@/services/price";
+import { useSelectedCurrency } from "@/store/currency";
+import { Transaction, getSolanaChainKey, useWalletStore } from "@/store/wallet";
+
+const SOLANA_EXPLORER: Record<number, (hash: string) => string> = {
+  [getSolanaChainKey("dynamic-mainnet")]: (hash) => `https://solscan.io/tx/${hash}`,
+  [getSolanaChainKey("dynamic-testnet")]: (hash) => `https://solscan.io/tx/${hash}?cluster=devnet`,
+};
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -16,6 +25,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function TransactionDetailsScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const { hash } = useLocalSearchParams<{ hash: string }>();
 
@@ -36,7 +47,7 @@ export default function TransactionDetailsScreen() {
 
   if (!transaction) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -52,10 +63,12 @@ export default function TransactionDetailsScreen() {
   }
 
   const networkConfig = DEFAULT_NETWORKS[transaction.chainId];
-  const explorerUrl = EthersClient.getExplorerTxUrl(
-    transaction.hash,
-    transaction.chainId,
-  );
+  const currency = useSelectedCurrency();
+  const { price: nativePrice } = useNativePrice(transaction.chainId);
+  const solanaExplorerFn = SOLANA_EXPLORER[transaction.chainId as number];
+  const explorerUrl = solanaExplorerFn
+    ? solanaExplorerFn(transaction.hash)
+    : EthersClient.getExplorerTxUrl(transaction.hash, transaction.chainId);
 
   const handleViewInExplorer = () => {
     if (explorerUrl) {
@@ -152,7 +165,7 @@ export default function TransactionDetailsScreen() {
   }, [transaction]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -189,6 +202,15 @@ export default function TransactionDetailsScreen() {
               networkConfig?.nativeCurrency.symbol ||
               "ETH"}
           </Text>
+          {!transaction.tokenSymbol && nativePrice && (
+            <Text style={styles.amountFiat}>
+              ≈{" "}
+              {PriceService.formatValue(
+                parseFloat(transaction.value) * nativePrice,
+                currency,
+              )}
+            </Text>
+          )}
 
           <Text style={styles.timestamp}>
             {formatTimestamp(transaction.timestamp)}
@@ -390,11 +412,11 @@ export default function TransactionDetailsScreen() {
         {/* View in Explorer Button */}
         {explorerUrl && (
           <TouchableOpacity
-            style={styles.explorerButton}
+            style={[styles.explorerButton, { borderColor: accentColor }]}
             onPress={handleViewInExplorer}
           >
-            <Ionicons name="open-outline" size={20} color="#569F8C" />
-            <Text style={styles.explorerButtonText}>
+            <Ionicons name="open-outline" size={20} color={accentColor} />
+            <Text style={[styles.explorerButtonText, { color: accentColor }]}>
               View in Block Explorer
             </Text>
           </TouchableOpacity>
@@ -425,6 +447,8 @@ function DetailRow({
       <View style={styles.detailValueContainer}>
         <Text
           style={[styles.detailValue, highlight && styles.detailValueHighlight]}
+          numberOfLines={1}
+          ellipsizeMode="middle"
         >
           {value}
         </Text>
@@ -499,6 +523,11 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 28,
     fontWeight: "700",
+    marginBottom: 4,
+  },
+  amountFiat: {
+    color: "#9CA3AF",
+    fontSize: 16,
     marginBottom: 8,
   },
   timestamp: {
@@ -526,20 +555,26 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#374151",
+    gap: 12,
   },
   detailLabel: {
     color: "#9CA3AF",
     fontSize: 14,
+    flexShrink: 0,
   },
   detailValueContainer: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    flex: 1,
+    justifyContent: "flex-end",
   },
   detailValue: {
     color: "#FFFFFF",
     fontSize: 14,
     fontFamily: "monospace",
+    flexShrink: 1,
+    textAlign: "right",
   },
   detailValueHighlight: {
     color: "#10B981",

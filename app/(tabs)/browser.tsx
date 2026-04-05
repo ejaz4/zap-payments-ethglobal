@@ -22,6 +22,7 @@ import {
   useBrowserStore,
   ZAP_WALLET_USER_AGENT,
 } from "@/store/browser";
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -42,7 +43,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import WebView, { WebViewMessageEvent } from "react-native-webview";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -62,6 +63,9 @@ const POPULAR_DAPPS = [
 ];
 
 export default function BrowserScreen() {
+  const insets = useSafeAreaInsets();
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const webViewRef = useRef<WebView>(null);
   const webViewRefs = useRef<Record<string, WebView | null>>({});
   const inputRef = useRef<TextInput>(null);
@@ -549,7 +553,7 @@ export default function BrowserScreen() {
   const renderHomepage = () => (
     <ScrollView
       style={styles.homepage}
-      contentContainerStyle={styles.homepageContent}
+      contentContainerStyle={[styles.homepageContent, { paddingBottom: Math.max(insets.bottom, 8) + 78 }]}
     >
       <View style={styles.logoContainer}>
         <Text style={styles.logo}>⚡</Text>
@@ -754,7 +758,7 @@ export default function BrowserScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]} edges={["top"]}>
       {/* Tab Switcher */}
       {showTabSwitcher && renderTabSwitcher()}
 

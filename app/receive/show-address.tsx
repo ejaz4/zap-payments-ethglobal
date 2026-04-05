@@ -1,5 +1,7 @@
 import { EthersClient } from "@/app/profiles/client";
 import { Button } from "@/components/ui";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -10,6 +12,14 @@ import QRCode from "react-native-qrcode-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ShowAddressScreen() {
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const bg = tintedBackground(accentColor);
+  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
+  const textMuted = isLight ? "#64748B" : "#9CA3AF";
+  const cardBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const cardBorder = isLight ? "#DCE8E2" : "transparent";
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
@@ -36,21 +46,21 @@ export default function ShowAddressScreen() {
 
   if (!selectedAccount) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No wallet found</Text>
+          <Text style={[styles.emptyText, { color: textMuted }]}>No wallet found</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          <Ionicons name="arrow-back" size={24} color={textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Show Address</Text>
+        <Text style={[styles.headerTitle, { color: textPrimary }]}>Show Address</Text>
         <View style={{ width: 24 }} />
       </View>
 
@@ -68,13 +78,13 @@ export default function ShowAddressScreen() {
           />
         </View>
 
-        <Text style={styles.networkLabel}>
+        <Text style={[styles.networkLabel, { color: textMuted }]}> 
           {networkConfig?.name || "Ethereum"} Network
         </Text>
 
-        <View style={styles.addressContainer}>
-          <Text style={styles.addressLabel}>Your Address</Text>
-          <Text style={styles.address}>{selectedAccount.address}</Text>
+        <View style={[styles.addressContainer, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}> 
+          <Text style={[styles.addressLabel, { color: textMuted }]}>Your Address</Text>
+          <Text style={[styles.address, { color: textPrimary }]}>{selectedAccount.address}</Text>
         </View>
 
         <View style={styles.warningBox}>

@@ -1,15 +1,32 @@
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { ENSService } from "@/services/ens";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { Contact, useContacts } from "@/store/contacts";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  FlatList,
-  Modal,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    FlatList,
+    Image,
+    Modal,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
+
+const AVATAR_COLORS = [
+  "#569F8C", "#8B5CF6", "#3B82F6", "#F59E0B",
+  "#EC4899", "#10B981", "#6366F1",
+];
+
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
 
 interface ContactPickerProps {
   visible: boolean;
@@ -18,13 +35,29 @@ interface ContactPickerProps {
 }
 
 /**
- * Modal to pick a contact from the saved contacts list
+ * Modal to pick a contact from the saved contacts list.
+ * Shows ENS avatars where available.
  */
 export function ContactPicker({
   visible,
   onClose,
   onSelectContact,
 }: ContactPickerProps) {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const titleColor = isLight ? "#0F172A" : "#FFFFFF";
+  const iconColor = isLight ? "#334155" : "#FFFFFF";
+  const panelBorder = isLight ? "#D5E2DC" : "#1E2E29";
+  const searchBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const searchText = isLight ? "#0F172A" : "#FFFFFF";
+  const searchPlaceholder = isLight ? "#94A3B8" : "#6B7280";
+  const rowBg = isLight ? "#FFFFFF" : "#1A2820";
+  const rowBorder = isLight ? "#DCE8E2" : "transparent";
+  const nameColor = isLight ? "#11181C" : "#FFFFFF";
+  const addressColor = isLight ? "#64748B" : "#9CA3AF";
+  const mutedIcon = isLight ? "#94A3B8" : "#6B7280";
   const contacts = useContacts();
   const [search, setSearch] = useState("");
 
@@ -34,7 +67,8 @@ export function ContactPicker({
     return contacts.filter(
       (c) =>
         c.name.toLowerCase().includes(query) ||
-        c.address.toLowerCase().includes(query),
+        c.address.toLowerCase().includes(query) ||
+        c.ensName?.toLowerCase().includes(query),
     );
   }, [contacts, search]);
 
@@ -52,21 +86,23 @@ export function ContactPicker({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.content}>
+        <View style={[styles.content, { backgroundColor: bg }]}>
+          <View style={styles.handle} />
+
           <View style={styles.header}>
-            <Text style={styles.title}>Select Contact</Text>
+            <Text style={[styles.title, { color: titleColor }]}>Select Contact</Text>
             <TouchableOpacity onPress={onClose}>
-              <Ionicons name="close" size={24} color="#FFFFFF" />
+              <Ionicons name="close" size={24} color={iconColor} />
             </TouchableOpacity>
           </View>
 
           {/* Search */}
-          <View style={styles.searchContainer}>
-            <Ionicons name="search" size={20} color="#6B7280" />
+          <View style={[styles.searchContainer, { backgroundColor: searchBg, borderColor: panelBorder }]}> 
+            <Ionicons name="search" size={18} color={searchPlaceholder} />
             <TextInput
-              style={styles.searchInput}
-              placeholder="Search contacts..."
-              placeholderTextColor="#6B7280"
+              style={[styles.searchInput, { color: searchText }]}
+              placeholder="Search contacts or ENS…"
+              placeholderTextColor={searchPlaceholder}
               value={search}
               onChangeText={setSearch}
               autoCapitalize="none"
@@ -74,7 +110,7 @@ export function ContactPicker({
             />
             {search.length > 0 && (
               <TouchableOpacity onPress={() => setSearch("")}>
-                <Ionicons name="close-circle" size={20} color="#6B7280" />
+                <Ionicons name="close-circle" size={18} color={searchPlaceholder} />
               </TouchableOpacity>
             )}
           </View>
@@ -82,13 +118,13 @@ export function ContactPicker({
           {/* Contacts List */}
           {filteredContacts.length === 0 ? (
             <View style={styles.emptyContainer}>
-              <Ionicons name="people-outline" size={48} color="#4B5563" />
-              <Text style={styles.emptyText}>
+              <Ionicons name="people-outline" size={48} color={isLight ? "#94A3B8" : "#4B5563"} />
+              <Text style={[styles.emptyText, { color: addressColor }]}> 
                 {contacts.length === 0
                   ? "No contacts saved yet"
                   : "No contacts match your search"}
               </Text>
-              <Text style={styles.emptyHint}>
+              <Text style={[styles.emptyHint, { color: mutedIcon }]}> 
                 {contacts.length === 0
                   ? "Save a recipient after sending to add them to your contacts"
                   : "Try a different search term"}
@@ -99,23 +135,11 @@ export function ContactPicker({
               data={filteredContacts}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.contactItem}
+                <ContactPickerRow
+                  contact={item}
                   onPress={() => handleSelect(item)}
-                >
-                  <View style={styles.contactAvatar}>
-                    <Text style={styles.contactAvatarText}>
-                      {item.name.slice(0, 2).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={styles.contactInfo}>
-                    <Text style={styles.contactName}>{item.name}</Text>
-                    <Text style={styles.contactAddress}>
-                      {item.address.slice(0, 8)}...{item.address.slice(-6)}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={20} color="#6B7280" />
-                </TouchableOpacity>
+                  isLight={isLight}
+                />
               )}
               contentContainerStyle={styles.listContent}
             />
@@ -126,6 +150,63 @@ export function ContactPicker({
   );
 }
 
+function ContactPickerRow({
+  contact,
+  onPress,
+  isLight,
+}: {
+  contact: Contact;
+  onPress: () => void;
+  isLight: boolean;
+}) {
+  const color = avatarColor(contact.name);
+  const [avatar, setAvatar] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!contact.ensName) return;
+    let cancelled = false;
+    ENSService.getProfile(contact.ensName).then((p) => {
+      if (!cancelled && p?.avatar) setAvatar(p.avatar);
+    });
+    return () => { cancelled = true; };
+  }, [contact.ensName]);
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.contactItem,
+        {
+          backgroundColor: isLight ? "#FFFFFF" : "#1A2820",
+          borderWidth: isLight ? 1 : 0,
+          borderColor: isLight ? "#DCE8E2" : "transparent",
+        },
+      ]}
+      onPress={onPress}
+    >
+      {avatar ? (
+        <Image source={{ uri: avatar }} style={styles.contactAvatarImage} />
+      ) : (
+        <View style={[styles.contactAvatar, { backgroundColor: color }]}>
+          <Text style={styles.contactAvatarText}>
+            {contact.name.slice(0, 2).toUpperCase()}
+          </Text>
+        </View>
+      )}
+      <View style={styles.contactInfo}>
+        <Text style={[styles.contactName, { color: isLight ? "#11181C" : "#FFFFFF" }]}>{contact.name}</Text>
+        {contact.ensName ? (
+          <Text style={styles.contactEns}>{contact.ensName}</Text>
+        ) : (
+          <Text style={[styles.contactAddress, { color: isLight ? "#64748B" : "#9CA3AF" }]}> 
+            {contact.address.slice(0, 8)}…{contact.address.slice(-6)}
+          </Text>
+        )}
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={isLight ? "#94A3B8" : "#6B7280"} />
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -133,59 +214,71 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   content: {
-    backgroundColor: "#1E2E29",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: "#0F1512",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     maxHeight: "80%",
     minHeight: 300,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#374151",
+    alignSelf: "center",
+    marginTop: 12,
+    marginBottom: 4,
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#374151",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#1E2E29",
   },
   title: {
-    color: "#FFFFFF",
     fontSize: 18,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#374151",
     margin: 16,
     paddingHorizontal: 12,
     borderRadius: 12,
+    gap: 8,
+    borderWidth: 1,
   },
   searchInput: {
     flex: 1,
-    color: "#FFFFFF",
-    fontSize: 16,
+    fontSize: 15,
     paddingVertical: 12,
-    paddingHorizontal: 8,
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 32,
+    paddingBottom: 40,
   },
   contactItem: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#374151",
-    padding: 16,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: 14,
     marginBottom: 8,
   },
   contactAvatar: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#569F8C",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 12,
+  },
+  contactAvatarImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     marginRight: 12,
   },
   contactAvatarText: {
@@ -197,13 +290,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contactName: {
-    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: "600",
     marginBottom: 2,
   },
+  contactEns: {
+    color: "#569F8C",
+    fontSize: 13,
+    fontWeight: "500",
+  },
   contactAddress: {
-    color: "#9CA3AF",
     fontSize: 13,
     fontFamily: "monospace",
   },

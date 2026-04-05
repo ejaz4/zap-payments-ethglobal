@@ -6,6 +6,7 @@ import { ZapContractService } from "@/services/zap-contract";
 import { usePaymentRequestStore } from "@/store/payment-request";
 import { Transaction, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
@@ -32,6 +33,8 @@ import Animated, {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function PaymentRequestStatusScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const {
     activeRequest,
@@ -347,7 +350,7 @@ export default function PaymentRequestStatusScreen() {
 
   if (!activeRequest) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.emptyContainer}>
           <Ionicons name="receipt-outline" size={64} color="#6B7280" />
           <Text style={styles.emptyTitle}>No Active Request</Text>
@@ -405,7 +408,7 @@ export default function PaymentRequestStatusScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />

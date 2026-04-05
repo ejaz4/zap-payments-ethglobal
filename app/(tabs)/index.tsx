@@ -1,20 +1,28 @@
-import { EthersClient } from "@/app/profiles/client";
+import { ChainId, EthersClient } from "@/app/profiles/client";
 import {
   NativeTokenRow,
-  NetworkBadge,
-  NetworkSelector,
   TokenRow,
   TransactionRow,
 } from "@/components/ui";
 import { DEFAULT_TOKENS } from "@/config/tokens";
+import { ApiProvider } from "@/crypto/provider/api";
+import { useENSName } from "@/hooks/use-ens";
 import { useNativePrice } from "@/hooks/use-prices";
 import { PriceService } from "@/services/price";
 import { BalanceService } from "@/services/wallet";
 import { ContractBalance, ZapContractService } from "@/services/zap-contract";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
+import { useSelectedCurrency } from "@/store/currency";
+import { useNetworkStore } from "@/store/network";
+import { useProviderStore } from "@/store/provider";
+import { useTokenStore } from "@/store/tokens";
 import {
   Account,
   CARD_BACKGROUNDS,
   CardBackground,
+  getSolanaChainKey,
+  SOLANA_NETWORK_IDS,
+  TokenBalance,
   useSelectedAccount,
   useWalletStore,
 } from "@/store/wallet";
@@ -28,6 +36,7 @@ import {
   ArrowRightLeftIcon,
   ArrowUpIcon,
   PlusIcon,
+  SettingsIcon,
 } from "lucide-react-native";
 import React, {
   useCallback,
@@ -54,6 +63,11 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import ReAnimated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -64,6 +78,10 @@ import { NfcContext } from "../nfc/context";
 const CARD_BACKGROUND_IMAGES: Record<CardBackground, ImageSourcePropType> = {
   "card-background-1": require("@/assets/images/backgrounds/card-background-1.png"),
   "card-background-2": require("@/assets/images/backgrounds/card-background-2.png"),
+  "card-background-3": require("@/assets/images/backgrounds/card-background-3.png"),
+  "card-background-4": require("@/assets/images/backgrounds/card-background-4.png"),
+  "card-background-5": require("@/assets/images/backgrounds/card-background-5.png"),
+  "card-background-6": require("@/assets/images/backgrounds/card-background-6.png"),
 };
 
 // Get background for account (uses saved preference or assigns based on index)
@@ -82,9 +100,81 @@ const CARD_PEEK = 20; // How much of adjacent cards peek out
 const CARD_WIDTH = SCREEN_WIDTH - CARD_PEEK * 2 - CARD_GAP;
 const CARD_TOTAL_WIDTH = CARD_WIDTH + CARD_GAP; // Width including gap for snapping
 
+// ─── AccountCard ─────────────────────────────────────────────────────────────
+// Extracted so it can call useENSName (hooks can't be inside render callbacks)
+
+interface AccountCardProps {
+  account: Account;
+  index: number;
+  totalValue: number;
+  currency: string;
+  copied: boolean;
+  activeCardIndex: number;
+  onCopy: (address: string) => void;
+}
+
+function AccountCard({
+  account,
+  index,
+  totalValue,
+  currency,
+  copied,
+  activeCardIndex,
+  onCopy,
+}: AccountCardProps) {
+  const cardBackground = getAccountCardBackground(account);
+  // ENS only works on mainnet
+  const ensName = useENSName(account.address, ChainId.mainnet);
+
+  const formatAddress = (addr: string) =>
+    `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+
+  return (
+    <View style={styles.cardWrapper}>
+      <ImageBackground
+        source={cardBackground}
+        style={styles.balanceCard}
+        imageStyle={styles.balanceCardImage}
+      >
+        <View style={{ alignItems: "flex-start" }}>
+          {totalValue > 0 ? (
+            <Text style={styles.balance}>
+              {PriceService.formatValue(totalValue, currency)}
+            </Text>
+          ) : (
+            <Text style={styles.balance}>$0.00</Text>
+          )}
+        </View>
+
+        <TouchableOpacity
+          style={styles.addressRow}
+          onPress={() => onCopy(account.address)}
+          onPressIn={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+        >
+          <Text style={styles.accountName}>
+            {ensName ?? account.name}
+          </Text>
+          <View style={styles.addressBadge}>
+            <Text style={styles.addressText}>
+              {ensName ? account.name : formatAddress(account.address)}
+            </Text>
+            <Ionicons
+              name={copied && activeCardIndex === index ? "checkmark" : "copy-outline"}
+              size={14}
+              color="#9CA3AF"
+            />
+          </View>
+        </TouchableOpacity>
+      </ImageBackground>
+    </View>
+  );
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const accounts = useWalletStore((s) => s.accounts);
   const selectedAccountIndex = useWalletStore((s) => s.selectedAccountIndex);
   const setSelectedAccountIndex = useWalletStore(
@@ -92,14 +182,15 @@ export default function HomeScreen() {
   );
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
-  const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);
   const allNativeBalances = useWalletStore((s) => s.nativeBalances);
   const allTokenBalances = useWalletStore((s) => s.tokenBalances);
   const allTransactions = useWalletStore((s) => s.transactions);
   const pendingTxs = useWalletStore((s) => s.pendingTransactions);
+  const currency = useSelectedCurrency();
+
+  const enabledNetworks = useNetworkStore((s) => s.enabledNetworks);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [networkSelectorVisible, setNetworkSelectorVisible] = useState(false);
   const [copied, setCopied] = useState(false);
   const [tokenPrices, setTokenPrices] = useState<Map<string, number>>(
     new Map(),
@@ -117,29 +208,68 @@ export default function HomeScreen() {
 
   // Get current account data based on active card
   const currentAccount = accounts[activeCardIndex] || selectedAccount;
-  const nativeBalance = currentAccount
-    ? allNativeBalances[`${currentAccount.address}_${selectedChainId}`] || "0"
-    : "0";
-  const tokenBalances = currentAccount
-    ? allTokenBalances[`${currentAccount.address}_${selectedChainId}`] || []
-    : [];
   const transactions = currentAccount
     ? allTransactions[currentAccount.address] || []
     : [];
 
-  // Get contract for current account and chain
+  // Get contract for current account and chain (keep for contract holdings section)
   const currentContract = useMemo(() => {
     if (!currentAccount) return null;
     return getContract(currentAccount.address, selectedChainId);
   }, [currentAccount, selectedChainId, getContract]);
 
-  // Show contract holdings when we have a contract with any balance
-  // (regardless of autoWithdraw setting - funds might be stuck from failed withdrawals)
   const showContractHoldings = currentContract && contractBalances.length > 0;
 
   const nfcState = useContext(NfcContext);
 
-  const networkConfig = EthersClient.getNetworkConfig(selectedChainId);
+  const isSolanaAccount = currentAccount?.accountType === "solana";
+
+  // Multi-chain: all non-zero native balances for current account
+  const allChainNativeBalances = useMemo(() => {
+    if (!currentAccount) return [];
+    if (isSolanaAccount) {
+      // Show a row for each Solana network that has a non-zero balance
+      return SOLANA_NETWORK_IDS
+        .map((networkId) => {
+          const chainKey = getSolanaChainKey(networkId);
+          const balance = allNativeBalances[`${currentAccount.address}_${chainKey}`] || "0";
+          const label = networkId === "dynamic-mainnet" ? "Solana" : "Solana Devnet";
+          return {
+            chainId: chainKey,
+            balance,
+            config: { nativeCurrency: { symbol: "SOL", name: label } } as any,
+          };
+        })
+        .filter(({ balance }) => parseFloat(balance) > 0);
+    }
+    return enabledNetworks
+      .map((chainId) => {
+        const balance = allNativeBalances[`${currentAccount.address}_${chainId}`] || "0";
+        const config = EthersClient.getNetworkConfig(chainId as ChainId);
+        return { chainId: chainId as ChainId, balance, config };
+      })
+      .filter(({ balance }) => parseFloat(balance) > 0);
+  }, [currentAccount, enabledNetworks, allNativeBalances, isSolanaAccount]);
+
+  // Multi-chain: all token balances for current account across all enabled networks
+  const allChainTokenBalances = useMemo(() => {
+    if (!currentAccount) return [];
+    if (isSolanaAccount) {
+      const result: TokenBalance[] = [];
+      for (const networkId of SOLANA_NETWORK_IDS) {
+        const chainKey = getSolanaChainKey(networkId);
+        const tokens = allTokenBalances[`${currentAccount.address}_${chainKey}`] || [];
+        result.push(...tokens);
+      }
+      return result;
+    }
+    const result: TokenBalance[] = [];
+    for (const chainId of enabledNetworks) {
+      const tokens = allTokenBalances[`${currentAccount.address}_${chainId}`] || [];
+      result.push(...tokens);
+    }
+    return result;
+  }, [currentAccount, enabledNetworks, allTokenBalances, isSolanaAccount]);
 
   // Get 2 most recent transactions (pending + confirmed) for current account
   const recentTransactions = useMemo(() => {
@@ -157,51 +287,49 @@ export default function HomeScreen() {
     return allTxs.slice(0, 2);
   }, [pendingTxs, transactions, currentAccount]);
 
-  // Native currency price
-  const { price: nativePrice, refresh: refreshNativePrice } =
-    useNativePrice(selectedChainId);
+  const { refresh: refreshNativePrice } = useNativePrice(ChainId.mainnet);
 
-  // Calculate native USD value
-  const nativeValueUsd = useMemo(() => {
-    if (!nativePrice) return undefined;
-    const balanceNum = parseFloat(nativeBalance);
-    if (isNaN(balanceNum)) return undefined;
-    return balanceNum * nativePrice;
-  }, [nativeBalance, nativePrice]);
-
-  // Total portfolio value
-  const totalValueUsd = useMemo(() => {
-    let total = nativeValueUsd || 0;
-    for (const token of tokenBalances) {
-      const price = tokenPrices.get(token.symbol.toUpperCase());
-      if (price) {
-        const balanceNum = parseFloat(token.balanceFormatted);
-        if (!isNaN(balanceNum)) {
-          total += balanceNum * price;
-        }
-      }
-    }
-    return total;
-  }, [nativeValueUsd, tokenBalances, tokenPrices]);
-
-  // Fetch token prices
+  // Fetch prices for all tokens + all chains' native tokens
   useEffect(() => {
     const fetchPrices = async () => {
-      if (tokenBalances.length === 0) return;
+      let nativeTokens: { symbol: string; address: string; chainId: ChainId }[];
 
-      const tokens = tokenBalances.map((t) => ({
-        symbol: t.symbol,
-        address: t.address,
-        chainId: t.chainId,
-      }));
+      if (isSolanaAccount) {
+        nativeTokens = [{ symbol: "SOL", address: "native", chainId: getSolanaChainKey("dynamic-mainnet") }];
+      } else {
+        nativeTokens = enabledNetworks
+          .map((chainId) => {
+            const config = EthersClient.getNetworkConfig(chainId as ChainId);
+            return config
+              ? { symbol: config.nativeCurrency.symbol, address: "native", chainId: chainId as ChainId }
+              : null;
+          })
+          .filter(Boolean) as { symbol: string; address: string; chainId: ChainId }[];
+      }
 
-      const prices = await PriceService.batchGetPrices(tokens);
-      setTokenPrices(prices);
+      const tokens = [
+        ...nativeTokens,
+        ...allChainTokenBalances.map((t) => ({
+          symbol: t.symbol,
+          address: t.address,
+          chainId: t.chainId,
+        })),
+      ];
+
+      const fetched = await PriceService.batchGetPrices(tokens, currency);
+      // Merge into existing prices — never wipe previously-loaded values
+      if (fetched.size > 0) {
+        setTokenPrices(prev => {
+          const next = new Map(prev);
+          for (const [k, v] of fetched) next.set(k, v);
+          return next;
+        });
+      }
     };
 
     fetchPrices();
     // No interval - cache handles freshness, pull-to-refresh forces update
-  }, [tokenBalances]);
+  }, [allChainTokenBalances, enabledNetworks, currency, isSolanaAccount]);
 
   // Fetch contract balances whenever we have a contract or wallet balances change
   // (wallet balance change indicates auto-withdraw may have completed)
@@ -231,7 +359,7 @@ export default function HomeScreen() {
     };
 
     fetchContractBalances();
-  }, [currentContract, currentAccount, selectedChainId, nativeBalance]);
+  }, [currentContract, currentAccount, selectedChainId]);
 
   // Withdraw a single token/native from contract
   const handleWithdraw = useCallback(
@@ -304,34 +432,101 @@ export default function HomeScreen() {
     [currentContract, currentAccount, selectedChainId, withdrawingToken],
   );
 
-  // Pull-to-refresh - force fresh API calls
+  // Fetch balances for all enabled networks
+  const refreshAllChainBalances = useCallback(async () => {
+    if (!currentAccount) return;
+    const walletStoreState = useWalletStore.getState();
+
+    if (currentAccount.accountType === "solana") {
+      const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+      if (!apiBaseUrl) return;
+      try {
+        const provider = new ApiProvider(apiBaseUrl);
+        // Fetch balances for all Solana networks in parallel
+        await Promise.allSettled(
+          SOLANA_NETWORK_IDS.map(async (networkId) => {
+            const chainKey = getSolanaChainKey(networkId);
+            try {
+              const [nativeResult, tokenResult] = await Promise.allSettled([
+                provider.getNativeBalance(currentAccount.address, networkId),
+                provider.getTokenBalances(currentAccount.address, networkId),
+              ]);
+              if (nativeResult.status === "fulfilled") {
+                walletStoreState.setNativeBalance(currentAccount.address, chainKey, nativeResult.value.amount);
+              }
+              if (tokenResult.status === "fulfilled") {
+                const solTokens: TokenBalance[] = tokenResult.value.map((b) => ({
+                  address: b.assetId.replace(`token:${networkId}:`, ""),
+                  symbol: b.symbol,
+                  name: b.symbol,
+                  decimals: b.decimals,
+                  balance: b.amountAtomic,
+                  balanceFormatted: b.amount,
+                  chainId: chainKey,
+                }));
+                walletStoreState.setTokenBalances(currentAccount.address, chainKey, solTokens);
+              }
+            } catch (err) {
+              console.warn(`[Home] Failed to fetch Solana balances for ${networkId}:`, err);
+            }
+          }),
+        );
+      } catch (err) {
+        console.warn("[Home] Failed to fetch Solana balances:", err);
+      }
+      return;
+    }
+
+    const tokenStoreState = useTokenStore.getState();
+    await Promise.allSettled(
+      enabledNetworks.map(async (chainId) => {
+        try {
+          const tokens = tokenStoreState.getTokensForChain(chainId as ChainId);
+          const tokenAddresses = tokens.map((t) => t.address);
+          const { native, tokens: tokenBalanceMap } = await EthersClient.batchGetAllBalances(
+            tokenAddresses, currentAccount.address, chainId as ChainId,
+          );
+
+          walletStoreState.setNativeBalance(
+            currentAccount.address, chainId as ChainId, EthersClient.fromWei(native),
+          );
+
+          const newTokenBalances: TokenBalance[] = [];
+          for (const token of tokens) {
+            const balance = tokenBalanceMap.get(token.address.toLowerCase()) ?? 0n;
+            const formatted = EthersClient.formatUnits(balance, token.decimals);
+            if (parseFloat(formatted) > 0) {
+              newTokenBalances.push({
+                address: token.address,
+                symbol: token.symbol,
+                name: token.name,
+                decimals: token.decimals,
+                balance: balance.toString(),
+                balanceFormatted: formatted,
+                chainId: chainId as ChainId,
+              });
+            }
+          }
+          walletStoreState.setTokenBalances(currentAccount.address, chainId as ChainId, newTokenBalances);
+        } catch (err) {
+          console.warn(`[Home] Failed to fetch balances for chain ${chainId}:`, err);
+        }
+      }),
+    );
+  }, [currentAccount, enabledNetworks]);
+
+  // Pull-to-refresh
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
 
-    // Refresh balances
-    await BalanceService.forceRefreshBalances();
-
-    // Refresh native price
+    await refreshAllChainBalances();
     refreshNativePrice();
 
-    // Refresh token prices (force fresh)
-    if (tokenBalances.length > 0) {
-      const tokens = tokenBalances.map((t) => ({
-        symbol: t.symbol,
-        address: t.address,
-        chainId: t.chainId,
-      }));
-      const prices = await PriceService.batchGetPrices(tokens, true);
-      setTokenPrices(prices);
-    }
-
-    // Refresh contract balances (always check if contract exists)
+    // Refresh contract balances
     if (currentContract && currentAccount) {
       try {
-        // Get default token addresses for current chain
         const defaultTokens = DEFAULT_TOKENS[selectedChainId] || [];
-        const tokenAddresses = defaultTokens.map((t) => t.address);
-
+        const tokenAddresses = defaultTokens.map((t: { address: string }) => t.address);
         const balances = await ZapContractService.getContractBalances(
           currentContract.address,
           selectedChainId,
@@ -344,20 +539,14 @@ export default function HomeScreen() {
     }
 
     setRefreshing(false);
-  }, [
-    refreshNativePrice,
-    tokenBalances,
-    currentContract,
-    currentAccount,
-    selectedChainId,
-  ]);
+  }, [refreshAllChainBalances, refreshNativePrice, currentContract, currentAccount, selectedChainId]);
 
-  // Auto-refresh on mount/chain change (throttled)
+  // Auto-refresh on mount and when account changes
   useEffect(() => {
     if (currentAccount) {
-      BalanceService.refreshBalances();
+      refreshAllChainBalances();
     }
-  }, [currentAccount, selectedChainId]);
+  }, [currentAccount]);
 
   // Sync active card index with selected account
   useEffect(() => {
@@ -393,23 +582,9 @@ export default function HomeScreen() {
     }
   };
 
-  const formatAddress = (address: string) => {
-    return `${address.slice(0, 6)}...${address.slice(-4)}`;
-  };
-
-  const formatBalance = (balance: string) => {
-    const num = parseFloat(balance);
-    if (num === 0) return "0";
-    if (num < 0.0001) return "< 0.0001";
-    return num.toLocaleString(undefined, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 4,
-    });
-  };
-
   if (!currentAccount) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No wallet found</Text>
         </View>
@@ -417,39 +592,49 @@ export default function HomeScreen() {
     );
   }
 
-  // Calculate balance and value for a specific account
-  const getAccountBalance = (account: Account) => {
-    return allNativeBalances[`${account.address}_${selectedChainId}`] || "0";
-  };
-
-  const getAccountTokenBalances = (account: Account) => {
-    return allTokenBalances[`${account.address}_${selectedChainId}`] || [];
-  };
-
+  // Sum total portfolio value for an account across all enabled networks
   const getAccountTotalValue = (account: Account) => {
-    const balance = getAccountBalance(account);
     let total = 0;
-
-    // Native balance value
-    if (nativePrice) {
-      const balanceNum = parseFloat(balance);
-      if (!isNaN(balanceNum)) {
-        total += balanceNum * nativePrice;
+    if (account.accountType === "solana") {
+      const solPrice = tokenPrices.get("SOL");
+      for (const networkId of SOLANA_NETWORK_IDS) {
+        const chainKey = getSolanaChainKey(networkId);
+        const nativeBal = allNativeBalances[`${account.address}_${chainKey}`];
+        if (nativeBal && solPrice) {
+          const num = parseFloat(nativeBal);
+          if (!isNaN(num)) total += num * solPrice;
+        }
+        const tokens = allTokenBalances[`${account.address}_${chainKey}`] || [];
+        for (const token of tokens) {
+          const price = tokenPrices.get(token.symbol.toUpperCase());
+          if (price) {
+            const num = parseFloat(token.balanceFormatted);
+            if (!isNaN(num)) total += num * price;
+          }
+        }
       }
+      return total;
     }
-
-    // Token values
-    const tokens = getAccountTokenBalances(account);
-    for (const token of tokens) {
-      const price = tokenPrices.get(token.symbol.toUpperCase());
-      if (price) {
-        const balanceNum = parseFloat(token.balanceFormatted);
-        if (!isNaN(balanceNum)) {
-          total += balanceNum * price;
+    for (const chainId of enabledNetworks) {
+      const nativeBal = allNativeBalances[`${account.address}_${chainId}`];
+      if (nativeBal) {
+        const config = EthersClient.getNetworkConfig(chainId as ChainId);
+        const symbol = config?.nativeCurrency.symbol?.toUpperCase() ?? "ETH";
+        const price = tokenPrices.get(symbol);
+        if (price) {
+          const num = parseFloat(nativeBal);
+          if (!isNaN(num)) total += num * price;
+        }
+      }
+      const tokens = allTokenBalances[`${account.address}_${chainId}`] || [];
+      for (const token of tokens) {
+        const price = tokenPrices.get(token.symbol.toUpperCase());
+        if (price) {
+          const num = parseFloat(token.balanceFormatted);
+          if (!isNaN(num)) total += num * price;
         }
       }
     }
-
     return total;
   };
 
@@ -459,92 +644,36 @@ export default function HomeScreen() {
   }: {
     item: Account;
     index: number;
-  }) => {
-    const balance = getAccountBalance(account);
-    const totalValue = getAccountTotalValue(account);
-    const cardBackground = getAccountCardBackground(account);
-
-    return (
-      <View style={styles.cardWrapper}>
-        <ImageBackground
-          source={cardBackground}
-          style={styles.balanceCard}
-          imageStyle={styles.balanceCardImage}
-        >
-          <View style={{ alignItems: "flex-start" }}>
-            {/* Total USD Value */}
-            {totalValue > 0 && (
-              <Text style={styles.totalValue}>
-                {PriceService.formatValue(totalValue)}
-              </Text>
-            )}
-
-            <Text style={styles.balance}>
-              {networkConfig?.nativeCurrency.symbol || "ETH"}{" "}
-              {formatBalance(balance)}
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.addressRow}
-            onPress={() => copyAddress(account.address)}
-            onPressIn={() =>
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-            }
-          >
-            <Text style={styles.accountName}>{account.name}</Text>
-            <View style={styles.addressBadge}>
-              <Text style={styles.addressText}>
-                {formatAddress(account.address)}
-              </Text>
-              <Ionicons
-                name={
-                  copied && activeCardIndex === index
-                    ? "checkmark"
-                    : "copy-outline"
-                }
-                size={14}
-                color="#9CA3AF"
-              />
-            </View>
-          </TouchableOpacity>
-        </ImageBackground>
-      </View>
-    );
-  };
+  }) => (
+    <AccountCard
+      account={account}
+      index={index}
+      totalValue={getAccountTotalValue(account)}
+      currency={currency}
+      copied={copied}
+      activeCardIndex={activeCardIndex}
+      onCopy={copyAddress}
+    />
+  );
 
   return (
-    <View style={[{ paddingTop: insets.top }, styles.container]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: bg }]}>
       <View style={styles.header}>
-        {/* Network Selector inside card */}
-        <TouchableOpacity
-          style={styles.networkBadgeInCard}
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            setNetworkSelectorVisible(true);
-          }}
-        >
-          <NetworkBadge
-            chainId={selectedChainId}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setNetworkSelectorVisible(true);
-            }}
-          />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Wallet</Text>
         <TouchableOpacity
           style={styles.accountButton}
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            router.push("/settings/accounts" as any);
+            router.push("/settings" as any);
           }}
         >
-          <Ionicons name="person-circle-outline" size={32} color="#FFFFFF" />
+          <SettingsIcon size={24} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
       <ScrollView
         style={styles.content}
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 8) + 78 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -588,6 +717,7 @@ export default function HomeScreen() {
                 style={[
                   styles.pageIndicator,
                   index === activeCardIndex && styles.pageIndicatorActive,
+                  index === activeCardIndex && { backgroundColor: accentColor },
                 ]}
               />
             ))}
@@ -616,8 +746,8 @@ export default function HomeScreen() {
                 nfcState.toggleLock();
               }}
             >
-              <Ionicons name="radio-outline" size={18} color="#10B981" />
-              <Text style={styles.nfcStatusText}>Tap to pay</Text>
+              <Ionicons name="radio-outline" size={18} color={accentColor} />
+              <Text style={[styles.nfcStatusText, { color: accentColor }]}>Tap to pay</Text>
             </TouchableOpacity>
           )}
 
@@ -643,24 +773,24 @@ export default function HomeScreen() {
         {/* Action Buttons */}
         <View style={styles.actions}>
           <ActionButton
-            icon={<ArrowUpIcon color={"#569F8C"} size={30} />}
+            icon={<ArrowUpIcon color={accentColor} size={30} />}
             label="Send"
             onPress={() => router.push("/send" as any)}
           />
           <ActionButton
-            icon={<ArrowDownIcon color={"#569F8C"} size={30} />}
+            icon={<ArrowDownIcon color={accentColor} size={30} />}
             label="Receive"
             onPress={() => router.push("/receive" as any)}
           />
           <ActionButton
-            icon={<PlusIcon color={"#569F8C"} size={30} />}
+            icon={<PlusIcon color={accentColor} size={30} />}
             label="Add Money"
             onPress={() =>
               Alert.alert("Coming Soon", "Add Money feature is coming soon!")
             }
           />
           <ActionButton
-            icon={<ArrowRightLeftIcon color={"#569F8C"} size={30} />}
+            icon={<ArrowRightLeftIcon color={accentColor} size={30} />}
             label="Swap"
             onPress={() =>
               Alert.alert("Coming Soon", "Swap feature is coming soon!")
@@ -715,8 +845,8 @@ export default function HomeScreen() {
                   router.push("/(tabs)/activity" as any);
                 }}
               >
-                <Text style={styles.seeMoreText}>See More</Text>
-                <Ionicons name="chevron-forward" size={16} color="#569F8C" />
+                <Text style={[styles.seeMoreText, { color: accentColor }]}>See More</Text>
+                <Ionicons name="chevron-forward" size={16} color={accentColor} />
               </TouchableOpacity>
             </View>
             <View style={styles.listContent}>
@@ -732,30 +862,41 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Tokens */}
+        {/* Assets — all networks */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Tokens</Text>
+          <Text style={styles.sectionTitle}>Assets</Text>
 
           <View style={styles.listContent}>
-            <NativeTokenRow
-              symbol={networkConfig?.nativeCurrency.symbol || "ETH"}
-              name={networkConfig?.nativeCurrency.name || "Ethereum"}
-              balance={nativeBalance}
-              valueUsd={nativeValueUsd}
-              onPress={() =>
-                router.push({
-                  pathname: "/token/native",
-                  params: { chainId: String(selectedChainId) },
-                } as any)
-              }
-            />
-            {tokenBalances.map((token) => {
-              // Calculate USD value for this token
+            {/* Native token row per network with a non-zero balance */}
+            {allChainNativeBalances.map(({ chainId, balance, config }) => {
+              const symbol = config?.nativeCurrency.symbol ?? "ETH";
+              const name = config?.nativeCurrency.name ?? "Ethereum";
+              const price = tokenPrices.get(symbol.toUpperCase());
+              const valueUsd = price ? parseFloat(balance) * price : undefined;
+              return (
+                <NativeTokenRow
+                  key={`native-${chainId}`}
+                  symbol={symbol}
+                  name={name}
+                  balance={balance}
+                  valueUsd={valueUsd}
+                  chainId={chainId}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/token/native",
+                      params: { chainId: String(chainId) },
+                    } as any)
+                  }
+                />
+              );
+            })}
+
+            {/* ERC20 tokens across all networks */}
+            {allChainTokenBalances.map((token) => {
               const price = tokenPrices.get(token.symbol.toUpperCase());
               const valueUsd = price
                 ? parseFloat(token.balanceFormatted) * price
                 : undefined;
-
               return (
                 <TokenRow
                   key={`${token.chainId}-${token.address}`}
@@ -772,10 +913,8 @@ export default function HomeScreen() {
             })}
           </View>
 
-          {tokenBalances.length === 0 && (
-            <Text style={styles.noTokens}>
-              No other tokens found on this network
-            </Text>
+          {allChainNativeBalances.length === 0 && allChainTokenBalances.length === 0 && (
+            <Text style={styles.noTokens}>No balances found across your networks</Text>
           )}
         </View>
 
@@ -788,8 +927,8 @@ export default function HomeScreen() {
                 style={styles.contractBadge}
                 onPress={() => router.push("/settings/zap-contract" as any)}
               >
-                <Ionicons name="flash" size={14} color="#569F8C" />
-                <Text style={styles.contractBadgeText}>Zap Contract</Text>
+                <Ionicons name="flash" size={14} color={accentColor} />
+                <Text style={[styles.contractBadgeText, { color: accentColor }]}>Zap Contract</Text>
               </TouchableOpacity>
             </View>
 
@@ -824,7 +963,7 @@ export default function HomeScreen() {
                   >
                     <View style={styles.holdingRow}>
                       <View style={styles.holdingIcon}>
-                        <Text style={styles.holdingIconText}>
+                        <Text style={[styles.holdingIconText, { color: accentColor }]}>
                           {balance.symbol.slice(0, 2).toUpperCase()}
                         </Text>
                       </View>
@@ -836,8 +975,26 @@ export default function HomeScreen() {
                       </View>
                       <View style={styles.holdingBalance}>
                         <Text style={styles.holdingAmount}>
-                          {parseFloat(balance.balanceFormatted).toFixed(6)}
+                          {parseFloat(balance.balanceFormatted).toLocaleString(
+                            undefined,
+                            { minimumFractionDigits: 0, maximumFractionDigits: 6 },
+                          )}
                         </Text>
+                        {(() => {
+                          const price =
+                            balance.tokenAddress === "native"
+                              ? (tokenPrices.get("ETH") ?? null)
+                              : (tokenPrices.get(balance.symbol.toUpperCase()) ?? null);
+                          const val =
+                            price !== null
+                              ? parseFloat(balance.balanceFormatted) * (price ?? 0)
+                              : null;
+                          return val !== null && val > 0 ? (
+                            <Text style={styles.holdingFiat}>
+                              {PriceService.formatValue(val, currency)}
+                            </Text>
+                          ) : null;
+                        })()}
                       </View>
                       <TouchableOpacity
                         style={[
@@ -848,15 +1005,15 @@ export default function HomeScreen() {
                         disabled={isWithdrawing || withdrawingToken !== null}
                       >
                         {isWithdrawing ? (
-                          <ActivityIndicator size="small" color="#569F8C" />
+                          <ActivityIndicator size="small" color={accentColor} />
                         ) : (
                           <>
                             <Ionicons
                               name="download-outline"
                               size={16}
-                              color="#569F8C"
+                              color={accentColor}
                             />
-                            <Text style={styles.withdrawButtonText}>
+                            <Text style={[styles.withdrawButtonText, { color: accentColor }]}>
                               Withdraw
                             </Text>
                           </>
@@ -871,12 +1028,6 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
-      <NetworkSelector
-        visible={networkSelectorVisible}
-        selectedChainId={selectedChainId}
-        onSelect={setSelectedChainId}
-        onClose={() => setNetworkSelectorVisible(false)}
-      />
     </View>
   );
 }
@@ -892,25 +1043,34 @@ function ActionButton({
   onPress: () => void;
   disabled?: boolean;
 }) {
-  const handlePress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    onPress();
-  };
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   return (
-    <TouchableOpacity
-      style={[styles.actionButton, disabled && styles.actionDisabled]}
-      onPress={handlePress}
-      disabled={disabled}
-      activeOpacity={0.7}
-    >
-      <View style={styles.actionIcon}>{icon}</View>
-      <Text
-        style={[styles.actionLabel, disabled && styles.actionLabelDisabled]}
+    <ReAnimated.View style={animatedStyle}>
+      <TouchableOpacity
+        style={[styles.actionButton, disabled && styles.actionDisabled]}
+        onPress={onPress}
+        onPressIn={() => {
+          scale.value = withSpring(0.92, { damping: 18, stiffness: 400 });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        }}
+        onPressOut={() => {
+          scale.value = withSpring(1, { damping: 18, stiffness: 400 });
+        }}
+        disabled={disabled}
+        activeOpacity={1}
       >
-        {label}
-      </Text>
-    </TouchableOpacity>
+        <View style={styles.actionIcon}>{icon}</View>
+        <Text
+          style={[styles.actionLabel, disabled && styles.actionLabelDisabled]}
+        >
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </ReAnimated.View>
   );
 }
 
@@ -994,6 +1154,14 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 24,
     fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 4,
+  },
+  balanceFiat: {
+    color: "#FFFFFF",
+    opacity: 0.6,
+    fontSize: 14,
+    fontWeight: "500",
     textAlign: "center",
     marginBottom: 8,
   },
@@ -1200,6 +1368,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     fontFamily: "monospace",
+  },
+  holdingFiat: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    marginTop: 2,
   },
   withdrawButton: {
     flexDirection: "row",

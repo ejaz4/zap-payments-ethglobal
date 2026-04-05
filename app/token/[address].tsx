@@ -1,14 +1,24 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
 import { ChainBadgeMini, PriceChart } from "@/components/ui";
+import { ApiProvider } from "@/crypto/provider/api";
 import { useNativePrice, useTokenPrice } from "@/hooks/use-prices";
 import { ERC20Service } from "@/services/erc20";
 import { PriceService } from "@/services/price";
+import { useSelectedCurrency } from "@/store/currency";
+import { useProviderStore } from "@/store/provider";
 import {
   TokenBalance,
+  getSolanaChainKey,
   useSelectedAccount,
   useTokenBalances,
   useWalletStore,
 } from "@/store/wallet";
+
+const SOLANA_KEY_TO_NETWORK: Record<number, string> = {
+  [getSolanaChainKey("dynamic-mainnet")]: "dynamic-mainnet",
+  [getSolanaChainKey("dynamic-testnet")]: "dynamic-testnet",
+};
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -33,6 +43,8 @@ interface SimpleTokenMetadata {
 }
 
 export default function TokenDetailsScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const { address: tokenAddress, chainId: chainIdParam } =
     useLocalSearchParams<{ address: string; chainId?: string }>();
@@ -44,16 +56,16 @@ export default function TokenDetailsScreen() {
   const selectedChainId = useMemo(() => {
     if (chainIdParam) {
       const parsed = parseInt(chainIdParam, 10);
-      console.log(
-        `[TokenDetails] Parsed chainId from params: ${parsed}, valid: ${Object.values(ChainId).includes(parsed)}`,
-      );
-      if (!isNaN(parsed) && Object.values(ChainId).includes(parsed)) {
+      // Accept EVM chain IDs and Solana placeholder keys (999001/999002)
+      if (!isNaN(parsed) && (Object.values(ChainId).includes(parsed) || parsed in SOLANA_KEY_TO_NETWORK)) {
         return parsed as ChainId;
       }
     }
-    console.log(`[TokenDetails] Using store chainId: ${storeChainId}`);
     return storeChainId;
   }, [chainIdParam, storeChainId]);
+
+  const solanaNetworkId = SOLANA_KEY_TO_NETWORK[selectedChainId as number] ?? null;
+  const isSolanaChain = !!solanaNetworkId;
 
   const [balance, setBalance] = useState<string>("0");
   const [refreshing, setRefreshing] = useState(false);
@@ -70,6 +82,8 @@ export default function TokenDetailsScreen() {
   // Check if this is native token (special address or no address)
   const isNativeToken =
     !tokenAddress || tokenAddress === "native" || tokenAddress === "0x";
+
+  const currency = useSelectedCurrency();
 
   // Price hooks
   const { price: nativePrice, refresh: refreshNativePrice } =
@@ -91,18 +105,16 @@ export default function TokenDetailsScreen() {
     return balanceNum * price;
   }, [balance, price]);
 
-  // Debug log
-  useEffect(() => {
-    console.log(
-      `[TokenDetails] tokenAddress: ${tokenAddress}, chainIdParam: ${chainIdParam}, selectedChainId: ${selectedChainId}, network: ${networkConfig?.name}`,
-    );
-  }, [tokenAddress, chainIdParam, selectedChainId, networkConfig]);
-
   // Find token info from balances
   useEffect(() => {
     if (isNativeToken) {
-      // Native token
-      if (networkConfig) {
+      if (isSolanaChain) {
+        setTokenMetadata({
+          name: solanaNetworkId === "dynamic-mainnet" ? "Solana" : "Solana Devnet",
+          symbol: "SOL",
+          decimals: 9,
+        });
+      } else if (networkConfig) {
         setTokenMetadata({
           name: networkConfig.nativeCurrency.name,
           symbol: networkConfig.nativeCurrency.symbol,
@@ -151,21 +163,19 @@ export default function TokenDetailsScreen() {
     if (!selectedAccount) return;
 
     if (isNativeToken) {
-      console.log(
-        `[TokenDetails] Fetching native balance for ${selectedAccount.address} on chain ${selectedChainId}`,
-      );
-      EthersClient.getNativeBalance(selectedAccount.address, selectedChainId)
-        .then((bal: bigint) => {
-          const formatted = EthersClient.fromWei(bal);
-          console.log(`[TokenDetails] Native balance fetched: ${formatted}`);
-          setBalance(formatted);
-        })
-        .catch((error) => {
-          console.error(
-            `[TokenDetails] Failed to fetch native balance:`,
-            error,
-          );
-        });
+      if (isSolanaChain) {
+        const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+        if (apiBaseUrl) {
+          const provider = new ApiProvider(apiBaseUrl);
+          provider.getNativeBalance(selectedAccount.address, solanaNetworkId)
+            .then((result) => setBalance(result.amount))
+            .catch(() => {});
+        }
+      } else {
+        EthersClient.getNativeBalance(selectedAccount.address, selectedChainId)
+          .then((bal: bigint) => setBalance(EthersClient.fromWei(bal)))
+          .catch(() => {});
+      }
     } else if (tokenAddress) {
       // Match by BOTH address AND chainId
       const tokenBalance = tokenBalances.find(
@@ -201,11 +211,18 @@ export default function TokenDetailsScreen() {
     try {
       // Refresh balances
       if (isNativeToken) {
-        const bal = await EthersClient.getNativeBalance(
-          selectedAccount.address,
-          selectedChainId,
-        );
-        setBalance(EthersClient.fromWei(bal));
+        if (isSolanaChain) {
+          const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+          if (apiBaseUrl) {
+            const result = await new ApiProvider(apiBaseUrl).getNativeBalance(
+              selectedAccount.address, solanaNetworkId,
+            );
+            setBalance(result.amount);
+          }
+        } else {
+          const bal = await EthersClient.getNativeBalance(selectedAccount.address, selectedChainId);
+          setBalance(EthersClient.fromWei(bal));
+        }
       } else if (tokenAddress && tokenMetadata) {
         const bal = await ERC20Service.getFormattedBalance(
           tokenAddress,
@@ -309,7 +326,7 @@ export default function TokenDetailsScreen() {
 
   if (!tokenMetadata) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -325,7 +342,7 @@ export default function TokenDetailsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -363,7 +380,7 @@ export default function TokenDetailsScreen() {
           <Text style={styles.balanceLabel}>Your Balance</Text>
           {valueUsd !== null && (
             <Text style={styles.balanceUsd}>
-              {PriceService.formatValue(valueUsd)}
+              {PriceService.formatValue(valueUsd, currency)}
             </Text>
           )}
           <Text style={styles.balanceValue}>
@@ -371,7 +388,7 @@ export default function TokenDetailsScreen() {
           </Text>
           {price && (
             <Text style={styles.priceLabel}>
-              1 {tokenMetadata.symbol} = {PriceService.formatPrice(price)}
+              1 {tokenMetadata.symbol} = {PriceService.formatPrice(price, currency)}
             </Text>
           )}
         </View>
@@ -422,14 +439,14 @@ export default function TokenDetailsScreen() {
               <Ionicons
                 name={copied ? "checkmark-circle" : "copy-outline"}
                 size={20}
-                color={copied ? "#10B981" : "#569F8C"}
+                color={copied ? "#10B981" : accentColor}
               />
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.hideQrButton}
               onPress={() => setShowQR(false)}
             >
-              <Text style={styles.hideQrText}>Hide QR Code</Text>
+              <Text style={[styles.hideQrText, { color: accentColor }]}>Hide QR Code</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -475,9 +492,10 @@ function ActionButton({
   label: string;
   onPress: () => void;
 }) {
+  const accentColor = useAccentColor();
   return (
     <TouchableOpacity style={styles.actionButton} onPress={onPress}>
-      <View style={styles.actionIcon}>
+      <View style={[styles.actionIcon, { backgroundColor: accentColor }]}>
         <Ionicons name={icon} size={24} color="#FFFFFF" />
       </View>
       <Text style={styles.actionLabel}>{label}</Text>

@@ -1,4 +1,5 @@
 import { ChainId } from "@/app/profiles/client";
+import { useProviderStore } from "@/store/provider";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -6,11 +7,15 @@ import { createJSONStorage, persist } from "zustand/middleware";
 /**
  * Available card background options
  */
-export type CardBackground = "card-background-1" | "card-background-2";
+export type CardBackground = "card-background-1" | "card-background-2" | "card-background-3" | "card-background-4" | "card-background-5" | "card-background-6";
 
 export const CARD_BACKGROUNDS: CardBackground[] = [
   "card-background-1",
   "card-background-2",
+   "card-background-3",
+   "card-background-4",
+    "card-background-5",
+     "card-background-6",
 ];
 
 /**
@@ -21,7 +26,15 @@ export interface Account {
   name: string;
   index: number;
   isImported: boolean;
+  /** "evm" (default) or "solana". Determines which provider and signing path is used. */
+  accountType?: "evm" | "solana";
+  /** Dynamic wallet ID returned by the API on wallet creation/import. Required for signing in strict Dynamic custody mode. */
+  dynamicWalletId?: string;
+  /** The API network this wallet was created on (e.g. "dynamic-mainnet", "dynamic-testnet"). */
+  networkId?: string;
   cardBackground?: CardBackground;
+  /** Native currency amount below which NFC payments are sent automatically without confirmation */
+  autoPayLimit?: string;
 }
 
 /**
@@ -133,6 +146,10 @@ interface WalletActions {
     address: string,
     background: CardBackground,
   ) => void;
+  updateAccountAutoPayLimit: (
+    address: string,
+    limit: string | undefined,
+  ) => void;
   clearAccounts: () => void;
 
   // Network
@@ -225,6 +242,13 @@ export const useWalletStore = create<WalletState & WalletActions>()(
         set((state) => ({
           accounts: state.accounts.map((a) =>
             a.address === address ? { ...a, cardBackground: background } : a,
+          ),
+        })),
+
+      updateAccountAutoPayLimit: (address, limit) =>
+        set((state) => ({
+          accounts: state.accounts.map((a) =>
+            a.address === address ? { ...a, autoPayLimit: limit } : a,
           ),
         })),
 
@@ -356,13 +380,35 @@ export const useSelectedAccount = () => {
 export const useSelectedChainId = () =>
   useWalletStore((s) => s.selectedChainId);
 
+/**
+ * Stable placeholder ChainId values for Solana networks.
+ * These are outside the real EVM chain ID range (max ~84532 for testnets).
+ * Used as storage keys in nativeBalances / tokenBalances maps.
+ */
+export const SOLANA_CHAIN_KEYS: Record<string, ChainId> = {
+  "dynamic-mainnet": 999001 as ChainId,
+  "dynamic-testnet": 999002 as ChainId,
+};
+
+/** All Solana networkIds in display order */
+export const SOLANA_NETWORK_IDS = ["dynamic-mainnet", "dynamic-testnet"] as const;
+
+/** Get the storage ChainId for a Solana networkId */
+export function getSolanaChainKey(networkId: string): ChainId {
+  return SOLANA_CHAIN_KEYS[networkId] ?? (999001 as ChainId);
+}
+
 export const useNativeBalance = (address?: string, chainId?: ChainId) => {
   const balances = useWalletStore((s) => s.nativeBalances);
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const selectedAccount = useSelectedAccount();
+  const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
 
   const addr = address || selectedAccount?.address;
-  const chain = chainId || selectedChainId;
+  const isSolana = selectedAccount?.accountType === "solana";
+  const chain = isSolana
+    ? getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet")
+    : (chainId || selectedChainId);
 
   if (!addr) return "0";
   return balances[`${addr}_${chain}`] || "0";
@@ -372,9 +418,13 @@ export const useTokenBalances = (address?: string, chainId?: ChainId) => {
   const balances = useWalletStore((s) => s.tokenBalances);
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const selectedAccount = useSelectedAccount();
+  const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
 
   const addr = address || selectedAccount?.address;
-  const chain = chainId || selectedChainId;
+  const isSolana = selectedAccount?.accountType === "solana";
+  const chain = isSolana
+    ? getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet")
+    : (chainId || selectedChainId);
 
   if (!addr) return [];
   return balances[`${addr}_${chain}`] || [];

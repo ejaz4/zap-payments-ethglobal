@@ -1,3 +1,4 @@
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { ChainId, DEFAULT_NETWORKS } from "@/app/profiles/client";
 import { useNetworkStore } from "@/store/network";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,7 +8,6 @@ import {
   Alert,
   KeyboardAvoidingView,
   Modal,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -32,6 +32,8 @@ const NETWORK_META: Record<number, { icon: string }> = {
 };
 
 export default function NetworkSettingsScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const customRpcUrls = useNetworkStore((s) => s.customRpcUrls);
   const customNetworks = useNetworkStore((s) => s.customNetworks);
@@ -184,7 +186,7 @@ export default function NetworkSettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]} edges={["top"]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -250,12 +252,12 @@ export default function NetworkSettingsScreen() {
                   <Text style={styles.rpcLabel}>
                     RPC URL{" "}
                     {hasCustomRpc && (
-                      <Text style={styles.customBadge}>(Custom)</Text>
+                      <Text style={[styles.customBadge, { color: accentColor }]}>(Custom)</Text>
                     )}
                   </Text>
                   {hasCustomRpc && (
                     <TouchableOpacity onPress={() => handleResetRpc(chainId)}>
-                      <Text style={styles.resetLink}>Reset</Text>
+                      <Text style={[styles.resetLink, { color: accentColor }]}>Reset</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -263,7 +265,7 @@ export default function NetworkSettingsScreen() {
                 {editingChain === chainId ? (
                   <View style={styles.editRpcContainer}>
                     <TextInput
-                      style={styles.rpcInput}
+                      style={[styles.rpcInput, { borderColor: accentColor }]}
                       value={rpcInput}
                       onChangeText={setRpcInput}
                       placeholder="https://..."
@@ -282,7 +284,7 @@ export default function NetworkSettingsScreen() {
                         <Text style={styles.cancelButtonText}>Cancel</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={styles.saveButton}
+                        style={[styles.saveButton, { backgroundColor: accentColor }]}
                         onPress={handleSaveRpc}
                       >
                         <Text style={styles.saveButtonText}>Save</Text>
@@ -373,11 +375,11 @@ export default function NetworkSettingsScreen() {
 
         {/* Add Custom Network Button */}
         <TouchableOpacity
-          style={styles.addNetworkButton}
+          style={[styles.addNetworkButton, { borderColor: accentColor }]}
           onPress={() => setShowAddNetwork(true)}
         >
-          <Ionicons name="add-circle-outline" size={24} color="#569F8C" />
-          <Text style={styles.addNetworkText}>Add Custom Network</Text>
+          <Ionicons name="add-circle-outline" size={24} color={accentColor} />
+          <Text style={[styles.addNetworkText, { color: accentColor }]}>Add Custom Network</Text>
         </TouchableOpacity>
 
         <View style={styles.helpSection}>
@@ -401,7 +403,7 @@ export default function NetworkSettingsScreen() {
         onRequestClose={() => setShowAddNetwork(false)}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          behavior="padding"
           style={styles.modalOverlay}
         >
           <View style={styles.modalContent}>
@@ -495,7 +497,7 @@ export default function NetworkSettingsScreen() {
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.saveButton}
+                style={[styles.saveButton, { backgroundColor: accentColor }]}
                 onPress={handleAddNetwork}
               >
                 <Text style={styles.saveButtonText}>Add Network</Text>

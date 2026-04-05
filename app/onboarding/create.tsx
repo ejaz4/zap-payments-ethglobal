@@ -1,48 +1,72 @@
 import { Button } from "@/components/ui";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import { WalletService } from "@/services/wallet";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-type Step = "generate" | "backup" | "verify";
+type Step = "type" | "generate" | "backup";
+type AccountType = "evm" | "solana";
 
 export default function CreateWalletScreen() {
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const bg = tintedBackground(accentColor);
+  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
+  const textMuted = isLight ? "#64748B" : "#9CA3AF";
+  const cardBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const cardAltBg = isLight ? "#EEF4F1" : "#374151";
+  const strongMuted = isLight ? "#334155" : "#D1D5DB";
   const router = useRouter();
   const accounts = useWalletStore((s) => s.accounts);
   const [step, setStep] = useState<Step>("generate");
+  const [accountType, setAccountType] = useState<AccountType>("evm");
   const [mnemonic, setMnemonic] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [revealedWords, setRevealedWords] = useState(false);
   const setHasBackedUp = useWalletStore((s) => s.setHasBackedUp);
   const setIsAddingAccount = useWalletStore((s) => s.setIsAddingAccount);
 
-  // Check if user already has a wallet (adding account mode)
+  // In "add account" mode we show the type picker first.
+  // For a brand-new wallet setup we skip straight to EVM mnemonic generation.
   const isAddingAccount = accounts.length > 0;
+
+  // Only initialise the step once on mount
+  const [initialized, setInitialized] = useState(false);
+  if (!initialized) {
+    setInitialized(true);
+    if (isAddingAccount && step !== "type") setStep("type");
+  }
 
   const handleGenerate = async () => {
     setIsLoading(true);
     try {
       if (isAddingAccount) {
-        // Create a new independent account with fresh random private key
-        const address = await WalletService.createNewAccount();
+        const address =
+          accountType === "solana"
+            ? await WalletService.createSolanaAccount()
+            : await WalletService.createNewAccount();
+
         if (address) {
           setIsAddingAccount(false);
-          router.back(); // Go back to accounts screen
+          router.back();
         } else {
           Alert.alert("Error", "Failed to create account.");
         }
       } else {
-        // Creating a brand new wallet with mnemonic
+        // Creating a brand new wallet with mnemonic (always EVM)
         const result = await WalletService.createNewWallet();
         if (result) {
           setMnemonic(result.mnemonic);
@@ -52,13 +76,9 @@ export default function CreateWalletScreen() {
         }
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
       Alert.alert(
         "Error",
-        isAddingAccount
-          ? `Failed to create account: ${errorMessage}`
-          : "Failed to create wallet",
+        error instanceof Error ? error.message : "Unknown error",
       );
     } finally {
       setIsLoading(false);
@@ -85,43 +105,135 @@ export default function CreateWalletScreen() {
     );
   };
 
-  const words = mnemonic.split(" ");
-
-  if (step === "generate") {
+  // ─── Step: type picker ──────────────────────────────────────────────────────
+  if (step === "type") {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            <Ionicons name="arrow-back" size={24} color={textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
+          <Text style={[styles.headerTitle, { color: textPrimary }]}>Add Account</Text>
+          <View style={{ width: 24 }} />
+        </View>
+
+        <View style={styles.content}>
+          <Text style={[styles.title, { color: textPrimary }]}>Choose account type</Text>
+          <Text style={[styles.description, { color: textMuted }]}> 
+            Pick the type of account you want to add to your wallet.
+          </Text>
+
+          <View style={styles.typeRow}>
+            <TouchableOpacity
+              style={[
+                styles.typeCard,
+                { backgroundColor: cardBg },
+                accountType === "evm" && styles.typeCardSelected,
+                accountType === "evm" && { borderColor: accentColor },
+                accountType === "evm" && isLight && { backgroundColor: "#EAF2EE" },
+              ]}
+              onPress={() => setAccountType("evm")}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.typeIcon}>⛓️</Text>
+              <Text style={[styles.typeLabel, { color: textPrimary }]}>EVM</Text>
+              <Text style={[styles.typeDesc, { color: textMuted }]}> 
+                Ethereum, Base, Arbitrum, Optimism and all EVM-compatible chains
+              </Text>
+              {accountType === "evm" && (
+                <View style={styles.typeCheck}>
+                  <Ionicons name="checkmark-circle" size={20} color={accentColor} />
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.typeCard,
+                { backgroundColor: cardBg },
+                accountType === "solana" && styles.typeCardSelected,
+                accountType === "solana" && { borderColor: accentColor },
+                accountType === "solana" && isLight && { backgroundColor: "#EAF2EE" },
+              ]}
+              onPress={() => setAccountType("solana")}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.typeIcon}>☀️</Text>
+              <Text style={[styles.typeLabel, { color: textPrimary }]}>Solana</Text>
+              <Text style={[styles.typeDesc, { color: textMuted }]}> 
+                Solana mainnet and devnet via the API provider
+              </Text>
+              {accountType === "solana" && (
+                <View style={styles.typeCheck}>
+                  <Ionicons name="checkmark-circle" size={20} color="#9945FF" />
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.footer}>
+          <Button
+            title="Continue"
+            onPress={() => setStep("generate")}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ─── Step: generate / confirm ───────────────────────────────────────────────
+  if (step === "generate") {
+    const isSolana = isAddingAccount && accountType === "solana";
+
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => (isAddingAccount ? setStep("type") : router.back())}
+          >
+            <Ionicons name="arrow-back" size={24} color={textPrimary} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: textPrimary }]}> 
             {isAddingAccount ? "Add Account" : "Create Wallet"}
           </Text>
           <View style={{ width: 24 }} />
         </View>
 
         <View style={styles.content}>
-          <View style={styles.iconContainer}>
+          <View style={[styles.iconContainer, { backgroundColor: cardBg }]}> 
             <Ionicons
-              name={isAddingAccount ? "person-add-outline" : "key-outline"}
+              name={
+                isSolana
+                  ? "sunny-outline"
+                  : isAddingAccount
+                  ? "person-add-outline"
+                  : "key-outline"
+              }
               size={64}
-              color="#569F8C"
+              color={isSolana ? "#9945FF" : accentColor}
             />
           </View>
 
-          <Text style={styles.title}>
-            {isAddingAccount ? "Create New Account" : "Create New Wallet"}
+          <Text style={[styles.title, { color: textPrimary }]}> 
+            {isSolana
+              ? "Create Solana Account"
+              : isAddingAccount
+              ? "Create EVM Account"
+              : "Create New Wallet"}
           </Text>
-          <Text style={styles.description}>
-            {isAddingAccount
-              ? "A new account with a unique private key will be generated. This account will be independent from your other accounts."
+          <Text style={[styles.description, { color: textMuted }]}> 
+            {isSolana
+              ? "A new Solana keypair will be generated and stored securely on your device. Operations go through the API provider."
+              : isAddingAccount
+              ? "A new EVM account with a unique private key will be generated. This account will be independent from your other accounts."
               : "We'll generate a unique 12-word recovery phrase for you. This phrase is the only way to recover your wallet if you lose access."}
           </Text>
 
           {!isAddingAccount && (
-            <View style={styles.warningBox}>
+            <View style={[styles.warningBox, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: isLight ? "#DCE8E2" : "transparent" }]}> 
               <Ionicons name="warning-outline" size={24} color="#F59E0B" />
-              <Text style={styles.warningText}>
+              <Text style={[styles.warningText, { color: strongMuted }]}> 
                 Never share your recovery phrase. Anyone with this phrase can
                 access your funds.
               </Text>
@@ -129,13 +241,13 @@ export default function CreateWalletScreen() {
           )}
 
           {isAddingAccount && (
-            <View style={styles.warningBox}>
+            <View style={[styles.warningBox, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: isLight ? "#DCE8E2" : "transparent" }, isSolana && styles.warningBoxSolana]}>
               <Ionicons
                 name="information-circle-outline"
                 size={24}
-                color="#569F8C"
+                color={isSolana ? "#9945FF" : accentColor}
               />
-              <Text style={styles.warningText}>
+              <Text style={[styles.warningText, { color: strongMuted }]}> 
                 The new account will be automatically added to your wallet and
                 you can switch between accounts anytime.
               </Text>
@@ -146,7 +258,11 @@ export default function CreateWalletScreen() {
         <View style={styles.footer}>
           <Button
             title={
-              isAddingAccount ? "Create Account" : "Generate Recovery Phrase"
+              isSolana
+                ? "Create Solana Account"
+                : isAddingAccount
+                ? "Create EVM Account"
+                : "Generate Recovery Phrase"
             }
             onPress={handleGenerate}
             loading={isLoading}
@@ -156,20 +272,23 @@ export default function CreateWalletScreen() {
     );
   }
 
+  // ─── Step: backup mnemonic (EVM new wallet only) ────────────────────────────
   if (step === "backup") {
+    const words = mnemonic.split(" ");
+
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => setStep("generate")}>
-            <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+            <Ionicons name="arrow-back" size={24} color={textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Backup Phrase</Text>
+          <Text style={[styles.headerTitle, { color: textPrimary }]}>Backup Phrase</Text>
           <View style={{ width: 24 }} />
         </View>
 
         <ScrollView style={styles.scrollContent}>
-          <Text style={styles.title}>Your Recovery Phrase</Text>
-          <Text style={styles.description}>
+          <Text style={[styles.title, { color: textPrimary }]}>Your Recovery Phrase</Text>
+          <Text style={[styles.description, { color: textMuted }]}> 
             Write down these 12 words in order and store them in a safe place.
           </Text>
 
@@ -180,9 +299,9 @@ export default function CreateWalletScreen() {
             <Ionicons
               name={revealedWords ? "eye-off-outline" : "eye-outline"}
               size={20}
-              color="#569F8C"
+              color={accentColor}
             />
-            <Text style={styles.revealText}>
+            <Text style={[styles.revealText, { color: accentColor }]}>
               {revealedWords ? "Hide Words" : "Reveal Words"}
             </Text>
           </TouchableOpacity>
@@ -190,21 +309,21 @@ export default function CreateWalletScreen() {
           <View style={styles.wordsContainer}>
             {words.map((word, index) => (
               <View key={index} style={styles.wordBox}>
-                <Text style={styles.wordNumber}>{index + 1}</Text>
-                <Text style={styles.word}>
+                <Text style={[styles.wordNumber, { color: textMuted }]}>{index + 1}</Text>
+                <Text style={[styles.word, { color: textPrimary }]}> 
                   {revealedWords ? word : "••••••"}
                 </Text>
               </View>
             ))}
           </View>
 
-          <View style={styles.warningBox}>
+          <View style={[styles.warningBox, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: isLight ? "#DCE8E2" : "transparent" }]}> 
             <Ionicons
               name="shield-checkmark-outline"
               size={24}
               color="#10B981"
             />
-            <Text style={styles.warningText}>
+            <Text style={[styles.warningText, { color: strongMuted }]}> 
               Store this phrase offline. Do not take screenshots or store it
               digitally.
             </Text>
@@ -284,12 +403,59 @@ const styles = StyleSheet.create({
     gap: 12,
     marginTop: 16,
   },
+  warningBoxSolana: {
+    borderWidth: 1,
+    borderColor: "#9945FF30",
+  },
   warningText: {
     flex: 1,
     color: "#D1D5DB",
     fontSize: 14,
     lineHeight: 20,
   },
+  // Type picker
+  typeRow: {
+    flexDirection: "row",
+    gap: 12,
+    width: "100%",
+    marginTop: 8,
+  },
+  typeCard: {
+    flex: 1,
+    backgroundColor: "#1E2E29",
+    borderRadius: 16,
+    padding: 20,
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 2,
+    borderColor: "transparent",
+    position: "relative",
+  },
+  typeCardSelected: {
+    borderColor: "#569F8C",
+    backgroundColor: "#1A2E28",
+  },
+  typeIcon: {
+    fontSize: 36,
+    marginBottom: 4,
+  },
+  typeLabel: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  typeDesc: {
+    color: "#9CA3AF",
+    fontSize: 12,
+    textAlign: "center",
+    lineHeight: 17,
+  },
+  typeCheck: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+  },
+  // Backup
   revealButton: {
     flexDirection: "row",
     alignItems: "center",

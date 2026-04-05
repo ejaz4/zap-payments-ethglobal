@@ -1,15 +1,17 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
 import { TokenInfo } from "@/config/tokens";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import { ERC20Service, MAX_UINT256 } from "@/services/erc20";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
 import {
-  Modal,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Modal,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { Button } from "./Button";
 
@@ -38,6 +40,17 @@ export function ApprovalModal({
   ownerAddress,
   chainId,
 }: ApprovalModalProps) {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const titleColor = isLight ? "#0F172A" : "#FFFFFF";
+  const textColor = isLight ? "#11181C" : "#FFFFFF";
+  const mutedText = isLight ? "#64748B" : "#9CA3AF";
+  const weakText = isLight ? "#94A3B8" : "#6B7280";
+  const cardBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const cardBorder = isLight ? "#DCE8E2" : "transparent";
+  const inputBg = isLight ? "#EEF4F1" : "#374151";
   const [approvalType, setApprovalType] = useState<ApprovalType>("exact");
   const [customAmount, setCustomAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -117,33 +130,51 @@ export function ApprovalModal({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: bg }]}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>Token Approval</Text>
+            <Text style={[styles.title, { color: titleColor }]}>Token Approval</Text>
             <TouchableOpacity onPress={onClose} disabled={isLoading}>
-              <Ionicons name="close" size={24} color="#FFFFFF" />
+              <Ionicons name="close" size={24} color={titleColor} />
             </TouchableOpacity>
           </View>
 
           {/* Token Info */}
-          <View style={styles.tokenInfo}>
+          <View
+            style={[
+              styles.tokenInfo,
+              {
+                backgroundColor: cardBg,
+                borderWidth: isLight ? 1 : 0,
+                borderColor: cardBorder,
+              },
+            ]}
+          >
             <View style={styles.tokenIcon}>
               <Text style={styles.tokenIconText}>
                 {token.symbol.slice(0, 2)}
               </Text>
             </View>
             <View>
-              <Text style={styles.tokenName}>{token.name}</Text>
-              <Text style={styles.tokenSymbol}>{token.symbol}</Text>
+              <Text style={[styles.tokenName, { color: textColor }]}>{token.name}</Text>
+              <Text style={[styles.tokenSymbol, { color: mutedText }]}>{token.symbol}</Text>
             </View>
           </View>
 
           {/* Current Allowance */}
           {currentAllowance !== null && (
-            <View style={styles.allowanceInfo}>
-              <Text style={styles.allowanceLabel}>Current Allowance:</Text>
-              <Text style={styles.allowanceValue}>
+            <View
+              style={[
+                styles.allowanceInfo,
+                {
+                  backgroundColor: cardBg,
+                  borderWidth: isLight ? 1 : 0,
+                  borderColor: cardBorder,
+                },
+              ]}
+            >
+              <Text style={[styles.allowanceLabel, { color: mutedText }]}>Current Allowance:</Text>
+              <Text style={[styles.allowanceValue, { color: textColor }]}> 
                 {parseFloat(currentAllowance) > 1e15
                   ? "Unlimited"
                   : `${parseFloat(currentAllowance).toFixed(4)} ${token.symbol}`}
@@ -156,6 +187,10 @@ export function ApprovalModal({
             <TouchableOpacity
               style={[
                 styles.option,
+                {
+                  backgroundColor: cardBg,
+                  borderColor: isLight ? cardBorder : "transparent",
+                },
                 approvalType === "exact" && styles.optionSelected,
               ]}
               onPress={() => setApprovalType("exact")}
@@ -168,12 +203,12 @@ export function ApprovalModal({
                     approvalType === "exact" && styles.radioSelected,
                   ]}
                 />
-                <Text style={styles.optionTitle}>Exact Amount</Text>
+                <Text style={[styles.optionTitle, { color: textColor }]}>Exact Amount</Text>
                 <View style={styles.recommendedBadge}>
                   <Text style={styles.recommendedText}>Recommended</Text>
                 </View>
               </View>
-              <Text style={styles.optionAmount}>
+              <Text style={[styles.optionAmount, { color: mutedText }]}> 
                 {requiredAmount} {token.symbol}
               </Text>
             </TouchableOpacity>
@@ -181,6 +216,10 @@ export function ApprovalModal({
             <TouchableOpacity
               style={[
                 styles.option,
+                {
+                  backgroundColor: cardBg,
+                  borderColor: isLight ? cardBorder : "transparent",
+                },
                 approvalType === "unlimited" && styles.optionSelected,
               ]}
               onPress={() => setApprovalType("unlimited")}
@@ -193,9 +232,9 @@ export function ApprovalModal({
                     approvalType === "unlimited" && styles.radioSelected,
                   ]}
                 />
-                <Text style={styles.optionTitle}>Unlimited</Text>
+                <Text style={[styles.optionTitle, { color: textColor }]}>Unlimited</Text>
               </View>
-              <Text style={styles.optionDescription}>
+              <Text style={[styles.optionDescription, { color: weakText }]}> 
                 No future approvals needed
               </Text>
             </TouchableOpacity>
@@ -203,6 +242,10 @@ export function ApprovalModal({
             <TouchableOpacity
               style={[
                 styles.option,
+                {
+                  backgroundColor: cardBg,
+                  borderColor: isLight ? cardBorder : "transparent",
+                },
                 approvalType === "custom" && styles.optionSelected,
               ]}
               onPress={() => setApprovalType("custom")}
@@ -215,13 +258,13 @@ export function ApprovalModal({
                     approvalType === "custom" && styles.radioSelected,
                   ]}
                 />
-                <Text style={styles.optionTitle}>Custom Amount</Text>
+                <Text style={[styles.optionTitle, { color: textColor }]}>Custom Amount</Text>
               </View>
               {approvalType === "custom" && (
                 <TextInput
-                  style={styles.customInput}
+                  style={[styles.customInput, { backgroundColor: inputBg, color: textColor }]}
                   placeholder={`Enter ${token.symbol} amount`}
-                  placeholderTextColor="#6B7280"
+                  placeholderTextColor={weakText}
                   keyboardType="decimal-pad"
                   value={customAmount}
                   onChangeText={setCustomAmount}
@@ -232,9 +275,18 @@ export function ApprovalModal({
           </View>
 
           {/* Description */}
-          <View style={styles.descriptionContainer}>
-            <Ionicons name="information-circle" size={20} color="#6B7280" />
-            <Text style={styles.description}>{getApprovalDescription()}</Text>
+          <View
+            style={[
+              styles.descriptionContainer,
+              {
+                backgroundColor: cardBg,
+                borderWidth: isLight ? 1 : 0,
+                borderColor: cardBorder,
+              },
+            ]}
+          >
+            <Ionicons name="information-circle" size={20} color={weakText} />
+            <Text style={[styles.description, { color: mutedText }]}>{getApprovalDescription()}</Text>
           </View>
 
           {/* Error */}
@@ -247,8 +299,8 @@ export function ApprovalModal({
 
           {/* Spender Info */}
           <View style={styles.spenderInfo}>
-            <Text style={styles.spenderLabel}>Approving for:</Text>
-            <Text style={styles.spenderAddress} numberOfLines={1}>
+            <Text style={[styles.spenderLabel, { color: mutedText }]}>Approving for:</Text>
+            <Text style={[styles.spenderAddress, { color: weakText }]} numberOfLines={1}>
               {spenderAddress.slice(0, 10)}...{spenderAddress.slice(-8)}
             </Text>
           </View>
@@ -299,7 +351,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#FFFFFF",
   },
   tokenInfo: {
     flexDirection: "row",
@@ -326,11 +377,9 @@ const styles = StyleSheet.create({
   tokenName: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#FFFFFF",
   },
   tokenSymbol: {
     fontSize: 14,
-    color: "#9CA3AF",
   },
   allowanceInfo: {
     flexDirection: "row",
@@ -343,12 +392,10 @@ const styles = StyleSheet.create({
   },
   allowanceLabel: {
     fontSize: 14,
-    color: "#9CA3AF",
   },
   allowanceValue: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#FFFFFF",
   },
   optionsContainer: {
     gap: 12,
@@ -383,7 +430,6 @@ const styles = StyleSheet.create({
   optionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#FFFFFF",
     flex: 1,
   },
   recommendedBadge: {
@@ -399,13 +445,11 @@ const styles = StyleSheet.create({
   },
   optionAmount: {
     fontSize: 14,
-    color: "#9CA3AF",
     marginTop: 4,
     marginLeft: 32,
   },
   optionDescription: {
     fontSize: 12,
-    color: "#6B7280",
     marginTop: 4,
     marginLeft: 32,
   },
@@ -430,7 +474,6 @@ const styles = StyleSheet.create({
   description: {
     flex: 1,
     fontSize: 13,
-    color: "#9CA3AF",
     lineHeight: 18,
   },
   errorContainer: {
@@ -455,11 +498,9 @@ const styles = StyleSheet.create({
   },
   spenderLabel: {
     fontSize: 14,
-    color: "#9CA3AF",
   },
   spenderAddress: {
     fontSize: 12,
-    color: "#6B7280",
     fontFamily: "monospace",
     maxWidth: "60%",
   },

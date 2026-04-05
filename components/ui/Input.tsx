@@ -1,13 +1,21 @@
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useAccentColor } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
 import {
-  TextInput as RNTextInput,
-  StyleSheet,
-  Text,
-  TextInputProps,
-  TouchableOpacity,
-  View,
+    TextInput as RNTextInput,
+    StyleSheet,
+    Text,
+    TextInputProps,
+    TouchableOpacity,
+    View,
 } from "react-native";
+import Animated, {
+    interpolateColor,
+    useAnimatedStyle,
+    useSharedValue,
+    withTiming,
+} from "react-native-reanimated";
 
 interface InputProps extends TextInputProps {
   label?: string;
@@ -28,19 +36,51 @@ export function Input({
   onRightIconPress,
   isPassword = false,
   style,
+  onFocus,
+  onBlur,
   ...props
 }: InputProps) {
-  const [isFocused, setIsFocused] = useState(false);
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
   const [showPassword, setShowPassword] = useState(false);
+  const focusProgress = useSharedValue(0);
+
+  const iconColor = isLight ? "#64748B" : "#9CA3AF";
+  const placeholderColor = isLight ? "#94A3B8" : "#6B7280";
+  const labelColor = isLight ? "#334155" : "#E5E7EB";
+  const inputBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const inputBorder = isLight ? "#D5E2DC" : "#374151";
+  const inputText = isLight ? "#0F172A" : "#FFFFFF";
+  const hintColor = isLight ? "#64748B" : "#6B7280";
+
+  const animatedBorderStyle = useAnimatedStyle(() => ({
+    borderColor: interpolateColor(
+      focusProgress.value,
+      [0, 1],
+      [inputBorder, accentColor],
+    ),
+  }));
+
+  const handleFocus = (e: any) => {
+    focusProgress.value = withTiming(1, { duration: 180 });
+    onFocus?.(e);
+  };
+
+  const handleBlur = (e: any) => {
+    focusProgress.value = withTiming(0, { duration: 180 });
+    onBlur?.(e);
+  };
 
   return (
     <View style={styles.container}>
-      {label && <Text style={styles.label}>{label}</Text>}
+      {label && <Text style={[styles.label, { color: labelColor }]}>{label}</Text>}
 
-      <View
+      <Animated.View
         style={[
           styles.inputContainer,
-          isFocused && styles.inputFocused,
+          { backgroundColor: inputBg },
+          animatedBorderStyle,
           error && styles.inputError,
         ]}
       >
@@ -48,16 +88,16 @@ export function Input({
           <Ionicons
             name={leftIcon}
             size={20}
-            color="#9CA3AF"
+            color={iconColor}
             style={styles.leftIcon}
           />
         )}
 
         <RNTextInput
-          style={[styles.input, style]}
-          placeholderTextColor="#6B7280"
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
+          style={[styles.input, { color: inputText }, style]}
+          placeholderTextColor={placeholderColor}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
           secureTextEntry={isPassword && !showPassword}
           {...props}
         />
@@ -67,20 +107,20 @@ export function Input({
             <Ionicons
               name={showPassword ? "eye-off-outline" : "eye-outline"}
               size={20}
-              color="#9CA3AF"
+              color={iconColor}
             />
           </TouchableOpacity>
         )}
 
         {rightIcon && !isPassword && (
           <TouchableOpacity onPress={onRightIconPress}>
-            <Ionicons name={rightIcon} size={20} color="#9CA3AF" />
+            <Ionicons name={rightIcon} size={20} color={iconColor} />
           </TouchableOpacity>
         )}
-      </View>
+      </Animated.View>
 
       {error && <Text style={styles.error}>{error}</Text>}
-      {hint && !error && <Text style={styles.hint}>{hint}</Text>}
+      {hint && !error && <Text style={[styles.hint, { color: hintColor }]}>{hint}</Text>}
     </View>
   );
 }
@@ -90,7 +130,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   label: {
-    color: "#E5E7EB",
     fontSize: 14,
     fontWeight: "500",
     marginBottom: 8,
@@ -98,14 +137,10 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#1E2E29",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#374151",
+    borderColor: "transparent",
     paddingHorizontal: 16,
-  },
-  inputFocused: {
-    borderColor: "#569F8C",
   },
   inputError: {
     borderColor: "#EF4444",
@@ -115,7 +150,6 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    color: "#FFFFFF",
     fontSize: 16,
     paddingVertical: 14,
   },
@@ -125,7 +159,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   hint: {
-    color: "#6B7280",
     fontSize: 12,
     marginTop: 4,
   },

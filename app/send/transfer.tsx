@@ -1,30 +1,42 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
 import {
+  AddressInput,
   ApprovalModal,
   Button,
-  ChainBadgeMini,
-  ContactPicker,
-  Input,
+  ChainBadgeMini
 } from "@/components/ui";
+import {
+  NetworkSelector,
+  SOLANA_NETWORKS,
+} from "@/components/ui/NetworkSelector";
 import { TokenInfo } from "@/config/tokens";
+import { ApiProvider } from "@/crypto/provider/api";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useFiatValue } from "@/hooks/use-fiat-value";
 import { ERC20Service } from "@/services/erc20";
-import { TransactionService } from "@/services/wallet";
+import { SecureStorage } from "@/services/storage";
+import { BalanceService, TransactionService } from "@/services/wallet";
+import { tintedBackground, tintedSurface, useAccentColor } from "@/store/appearance";
 import { useContactByAddress, useContactsStore } from "@/store/contacts";
+import { useProviderStore } from "@/store/provider";
 import { useTokenStore } from "@/store/tokens";
 import {
   TokenBalance,
+  getSolanaChainKey,
   useNativeBalance,
   useSelectedAccount,
   useTokenBalances,
   useWalletStore,
 } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   ScrollView,
   StyleSheet,
@@ -41,17 +53,72 @@ type SelectedAsset =
   | { type: "token"; token: TokenInfo; balance?: TokenBalance };
 
 export default function SendScreen() {
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const bg = tintedBackground(accentColor);
+  const headerBg = tintedSurface(accentColor, 0.08, isLight ? "#FFFFFF" : "#111111", scheme);
+  const panelBg = tintedSurface(accentColor, 0.11, isLight ? "#FFFFFF" : "#111111", scheme);
+  const panelBorder = isLight ? "#D6E4DE" : "#24312C";
+  const panelText = isLight ? "#0F172A" : "#FFFFFF";
+  const panelMuted = isLight ? "#64748B" : "#9CA3AF";
+  const panelSubtle = isLight ? "#94A3B8" : "#6B7280";
   const router = useRouter();
-  const { tokenAddress, chainId: chainIdParam } = useLocalSearchParams<{
+  const {
+    tokenAddress,
+    chainId: chainIdParam,
+    address: addressParam,
+    amount: amountParam,
+  } = useLocalSearchParams<{
     tokenAddress?: string;
     chainId?: string;
+    /** Pre-filled recipient address — set when navigating from a Zap Pay NFC tap */
+    address?: string;
+    /** Pre-filled amount — set when navigating from a Zap Pay NFC tap */
+    amount?: string;
   }>();
   const selectedAccount = useSelectedAccount();
+  const isSolanaAccount = selectedAccount?.accountType === "solana";
+  const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
+  const solanaNetworkName = SOLANA_NETWORKS.find((n) => n.networkId === (selectedApiNetworkId ?? "dynamic-mainnet"))?.displayName ?? "Solana";
   const storeChainId = useWalletStore((s) => s.selectedChainId);
   const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);
   const nativeBalance = useNativeBalance();
   const tokenBalances = useTokenBalances();
   const getTokensForChain = useTokenStore((s) => s.getTokensForChain);
+
+  // For Solana: re-fetch native + token balances whenever the selected network changes
+  useEffect(() => {
+    if (!isSolanaAccount || !selectedAccount) return;
+    const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+    if (!apiBaseUrl) return;
+    const walletStore = useWalletStore.getState();
+    const provider = new ApiProvider(apiBaseUrl);
+    const networkId = selectedApiNetworkId ?? "dynamic-mainnet";
+    const chainKey = getSolanaChainKey(networkId);
+
+    // Fetch native and token balances in parallel
+    Promise.allSettled([
+      provider.getNativeBalance(selectedAccount.address, networkId),
+      provider.getTokenBalances(selectedAccount.address, networkId),
+    ]).then(([nativeResult, tokenResult]) => {
+      if (nativeResult.status === "fulfilled") {
+        walletStore.setNativeBalance(selectedAccount.address, chainKey, nativeResult.value.amount);
+      }
+      if (tokenResult.status === "fulfilled") {
+        const solTokens = tokenResult.value.map((b) => ({
+          address: b.assetId.replace(`token:${networkId}:`, ""),
+          symbol: b.symbol,
+          name: b.symbol,
+          decimals: b.decimals,
+          balance: b.amountAtomic,
+          balanceFormatted: b.amount,
+          chainId: chainKey,
+        }));
+        walletStore.setTokenBalances(selectedAccount.address, chainKey, solTokens);
+      }
+    });
+  }, [isSolanaAccount, selectedAccount?.address, selectedApiNetworkId]);
 
   // Use chainId from params if provided, otherwise fall back to store's selectedChainId
   const selectedChainId = useMemo(() => {
@@ -66,13 +133,12 @@ export default function SendScreen() {
 
   const networkConfig = EthersClient.getNetworkConfig(selectedChainId);
 
-  const [recipient, setRecipient] = useState("");
-  const [amount, setAmount] = useState("");
+  const [recipient, setRecipient] = useState(addressParam || "");
+  const [amount, setAmount] = useState(amountParam || "");
+  const fiatAmount = useFiatValue(amount, selectedChainId);
   const [isLoading, setIsLoading] = useState(false);
-  const [recipientError, setRecipientError] = useState<string | null>(null);
   const [amountError, setAmountError] = useState<string | null>(null);
   const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
-  const [isResolving, setIsResolving] = useState(false);
 
   // Token selection state
   const [selectedAsset, setSelectedAsset] = useState<SelectedAsset>({
@@ -83,11 +149,10 @@ export default function SendScreen() {
   // Approval state for ERC20 tokens
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [pendingSpender, setPendingSpender] = useState<string | null>(null);
-  const [needsApproval, setNeedsApproval] = useState(false);
-  const [checkingApproval, setCheckingApproval] = useState(false);
 
-  // Contact picker state
-  const [showContactPicker, setShowContactPicker] = useState(false);
+  // Chain picker state
+  const [showChainPicker, setShowChainPicker] = useState(false);
+
   const [showSaveContactModal, setShowSaveContactModal] = useState(false);
   const [newContactName, setNewContactName] = useState("");
   const existingContact = useContactByAddress(resolvedAddress || "");
@@ -98,6 +163,18 @@ export default function SendScreen() {
 
   // Get available tokens with balances for the current chain
   const availableTokens = useMemo(() => {
+    if (isSolanaAccount) {
+      // For Solana, use tokens already fetched from the API (stored in tokenBalances)
+      return tokenBalances.map((tb) => ({
+        token: {
+          address: tb.address,
+          symbol: tb.symbol,
+          name: tb.name,
+          decimals: tb.decimals,
+        } as any,
+        balance: tb,
+      }));
+    }
     const tokens = getTokensForChain(selectedChainId);
     return tokens.map((token) => {
       const balance = tokenBalances.find(
@@ -107,7 +184,7 @@ export default function SendScreen() {
       );
       return { token, balance };
     });
-  }, [selectedChainId, tokenBalances, getTokensForChain]);
+  }, [selectedChainId, tokenBalances, getTokensForChain, isSolanaAccount]);
 
   // Auto-select asset from route params on mount
   useEffect(() => {
@@ -148,10 +225,11 @@ export default function SendScreen() {
 
   const currentSymbol = useMemo(() => {
     if (selectedAsset.type === "native") {
+      if (isSolanaAccount) return "SOL";
       return networkConfig?.nativeCurrency.symbol || "ETH";
     }
     return selectedAsset.token.symbol;
-  }, [selectedAsset, networkConfig]);
+  }, [selectedAsset, networkConfig, isSolanaAccount]);
 
   // Get the effective chain ID based on selected asset
   // If a token has a different chainId than the selected chain, use the token's chain
@@ -167,53 +245,6 @@ export default function SendScreen() {
     return EthersClient.getNetworkConfig(effectiveChainId);
   }, [effectiveChainId]);
 
-  // Resolve ENS
-  useEffect(() => {
-    const resolveAddress = async () => {
-      if (!recipient) {
-        setResolvedAddress(null);
-        return;
-      }
-
-      // If already a valid address
-      if (EthersClient.isValidAddress(recipient)) {
-        setResolvedAddress(recipient);
-        setRecipientError(null);
-        return;
-      }
-
-      // Try ENS resolution
-      if (recipient.includes(".")) {
-        setIsResolving(true);
-        try {
-          const resolved = await EthersClient.resolveENS(
-            recipient,
-            ChainId.mainnet,
-          );
-          if (resolved) {
-            setResolvedAddress(resolved);
-            setRecipientError(null);
-          } else {
-            setResolvedAddress(null);
-            setRecipientError("Could not resolve ENS name");
-          }
-        } catch {
-          setResolvedAddress(null);
-          setRecipientError("Could not resolve ENS name");
-        } finally {
-          setIsResolving(false);
-        }
-      } else {
-        setResolvedAddress(null);
-        if (recipient.length > 0) {
-          setRecipientError("Invalid address");
-        }
-      }
-    };
-
-    const timer = setTimeout(resolveAddress, 500);
-    return () => clearTimeout(timer);
-  }, [recipient]);
 
   const validateAmount = (value: string) => {
     if (!value) {
@@ -227,10 +258,13 @@ export default function SendScreen() {
       return;
     }
 
-    const balance = parseFloat(currentBalance);
-    if (num > balance) {
-      setAmountError("Insufficient balance");
-      return;
+    // For Solana, skip local balance check — the API validates funds
+    if (!isSolanaAccount) {
+      const balance = parseFloat(currentBalance);
+      if (num > balance) {
+        setAmountError("Insufficient balance");
+        return;
+      }
     }
 
     setAmountError(null);
@@ -243,38 +277,6 @@ export default function SendScreen() {
       selectedAsset.type === "native" ? Math.max(0, balance - 0.01) : balance;
     setAmount(maxAmount.toString());
     validateAmount(maxAmount.toString());
-  };
-
-  // Check if ERC20 token transfer needs approval
-  // For direct transfers, approval is not needed (we use transfer, not transferFrom)
-  // But this can be useful when interacting with DEX or other contracts
-  const checkApprovalNeeded = async (
-    spenderAddress: string,
-  ): Promise<boolean> => {
-    if (selectedAsset.type !== "token" || !selectedAccount || !amount) {
-      return false;
-    }
-
-    try {
-      setCheckingApproval(true);
-      const amountWei = EthersClient.parseUnits(
-        amount,
-        selectedAsset.token.decimals,
-      );
-      const needsApproval = await ERC20Service.needsApproval(
-        selectedAsset.token.address,
-        selectedAccount.address,
-        spenderAddress,
-        amountWei,
-        effectiveChainId,
-      );
-      return needsApproval;
-    } catch (error) {
-      console.error("Error checking approval:", error);
-      return false;
-    } finally {
-      setCheckingApproval(false);
-    }
   };
 
   // Handle approval for ERC20 tokens
@@ -321,6 +323,104 @@ export default function SendScreen() {
     }
 
     const isToken = selectedAsset.type === "token";
+
+    // Solana send path — delegates signing to Dynamic custody via the API
+    if (isSolanaAccount) {
+      const networkId = useProviderStore.getState().selectedApiNetworkId ?? "dynamic-mainnet";
+
+      // All Solana wallets are Dynamic-managed — accountType is the source of truth.
+      // The API signs using the from_address in custody context (dynamicWalletId is metadata only).
+
+      const confirmMessage = `Send ${amount} ${currentSymbol} to ${resolvedAddress.slice(0, 8)}...${resolvedAddress.slice(-4)} on Solana?`;
+      Alert.alert("Confirm Transaction", confirmMessage, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Send",
+          onPress: async () => {
+            setIsLoading(true);
+            try {
+              const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+              if (!apiBaseUrl) throw new Error("No API URL configured. Set one in Settings → API.");
+
+              // privateKey may be empty in strict Dynamic custody mode — that's OK
+              const privateKey = await SecureStorage.loadPrivateKey(selectedAccount.address);
+
+              const provider = new ApiProvider(apiBaseUrl);
+              const tokenRef = isToken && selectedAsset.type === "token" ? selectedAsset.token.address : undefined;
+
+              // Use the split flow (build → sign → broadcast) as recommended by the API docs.
+              // Falls back gracefully: Dynamic custody signs via feePayer address.
+              let result;
+              try {
+                result = await provider.sendSplit(
+                  selectedAccount.address,
+                  resolvedAddress,
+                  amount,
+                  networkId,
+                  privateKey || undefined,
+                  tokenRef,
+                );
+              } catch (splitErr) {
+                // Fallback to one-shot send if split flow isn't supported
+                console.warn("[Transfer] Split flow failed, falling back to sendWithKey:", splitErr);
+                result = await provider.sendWithKey(
+                  selectedAccount.address,
+                  resolvedAddress,
+                  amount,
+                  networkId,
+                  privateKey || undefined,
+                  tokenRef,
+                );
+              }
+
+              // Record in transaction history — mark as pending until confirmed
+              const chainKey = getSolanaChainKey(networkId);
+              const txHash = result.txHash ?? `sol-${Date.now()}`;
+              useWalletStore.getState().addTransaction(selectedAccount.address, {
+                hash: txHash,
+                from: selectedAccount.address,
+                to: resolvedAddress,
+                value: amount,
+                chainId: chainKey,
+                timestamp: Date.now(),
+                status: result.status === "confirmed" ? "confirmed" : "pending",
+                type: "send",
+                tokenSymbol: isToken && selectedAsset.type === "token" ? selectedAsset.token.symbol : "SOL",
+                tokenAddress: tokenRef,
+              });
+
+              // Refresh balances after send
+              BalanceService.forceRefreshBalances();
+
+              Alert.alert(
+                "Transaction Sent",
+                result.txHash
+                  ? `Transaction hash: ${result.txHash.slice(0, 10)}...${result.explorerUrl ? `\n\n${result.explorerUrl}` : ""}`
+                  : "Transaction submitted.",
+                [{ text: "OK", onPress: () => router.back() }],
+              );
+            } catch (error: any) {
+              console.error("Solana send error:", error);
+              const message = error?.message ?? "Failed to send transaction";
+              // Handle 503 — custody/provider failure with actionable message
+              if (message.includes("503") || message.toLowerCase().includes("custody") || message.toLowerCase().includes("signing")) {
+                Alert.alert(
+                  "Signing Failed",
+                  "The selected wallet could not sign this transaction. This usually means the wallet is not managed by Dynamic in this environment.\n\nTry creating or importing the wallet again.",
+                );
+              } else {
+                Alert.alert("Error", message);
+              }
+            } finally {
+              setIsLoading(false);
+            }
+          },
+        },
+      ]);
+      return;
+    }
+
+    // EVM send path
     const networkName = effectiveNetworkConfig?.name || "Unknown Network";
     const nativeSymbol = effectiveNetworkConfig?.nativeCurrency.symbol || "ETH";
 
@@ -407,83 +507,133 @@ export default function SendScreen() {
     setAmountError(null);
   };
 
-  const canSend = resolvedAddress && amount && !amountError && !recipientError;
+  // All Solana wallets are Dynamic-managed (created via the API); no unmanaged gate needed.
+  const canSend = resolvedAddress && amount && !amountError;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
+      <View style={[styles.header, { backgroundColor: headerBg, borderBottomColor: panelBorder }]}> 
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="close" size={24} color="#FFFFFF" />
+          <Ionicons name="close" size={24} color={panelText} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Send</Text>
+        <Text style={[styles.headerTitle, { color: panelText }]}>Send</Text>
         <View style={{ width: 24 }} />
       </View>
 
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
-        {/* Asset Selector */}
-        <TouchableOpacity
-          style={styles.assetSelector}
-          onPress={() => setShowAssetPicker(true)}
-        >
-          <View style={styles.assetInfo}>
-            <View style={styles.assetIconWrapper}>
-              <View style={styles.assetIcon}>
+        {/* NFC source badge — shown when address was read from a Zap Pay tap */}
+        {addressParam && (
+          <View style={styles.nfcSourceBadge}>
+            <Ionicons name="radio" size={14} color="#10B981" />
+            <Text style={styles.nfcSourceBadgeText}>
+              Address read via Zap Pay NFC
+            </Text>
+          </View>
+        )}
+
+        <View style={[styles.balanceInfo, { backgroundColor: panelBg, borderColor: panelBorder }]}> 
+          <Text style={[styles.balanceLabel, { color: panelMuted }]}>Available:</Text>
+          <Text style={[styles.balanceValue, { color: panelText }]}>
+            {parseFloat(currentBalance).toFixed(6)} {currentSymbol}
+          </Text>
+        </View>
+
+        <View style={[styles.amountCard, { backgroundColor: panelBg, borderColor: panelBorder }]}> 
+          <View style={styles.amountCardHeaderRow}>
+            <Text style={[styles.amountCardLabel, { color: panelMuted }]}>Amount</Text>
+            <View style={styles.amountCardPills}>
+              <TouchableOpacity
+                style={[
+                  styles.amountCardChip,
+                  { borderColor: panelBorder, backgroundColor: isLight ? "#FFFFFF" : "#14201C" },
+                ]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setShowChainPicker(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.amountCardChipText, { color: panelText }]} numberOfLines={1}>
+                  {isSolanaAccount ? solanaNetworkName : (networkConfig?.name ?? "Unknown")}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={panelSubtle} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.amountCardChip,
+                  { borderColor: panelBorder, backgroundColor: isLight ? "#FFFFFF" : "#14201C" },
+                ]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setShowAssetPicker(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.amountCardChipText, { color: panelText }]} numberOfLines={1}>
+                  {currentSymbol}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={panelSubtle} />
+              </TouchableOpacity>
+            </View>
+          </View>
+          <View style={styles.amountCardMetaRow}>
+            <View style={styles.assetInfo}>
+              <View style={[styles.assetIcon, { backgroundColor: isLight ? "#EAF2EF" : "#253531" }]}>
                 <Text style={styles.assetIconText}>
                   {selectedAsset.type === "native"
-                    ? (networkConfig?.nativeCurrency.symbol || "ETH").slice(
-                        0,
-                        2,
-                      )
+                    ? (networkConfig?.nativeCurrency.symbol || "ETH").slice(0, 2)
                     : selectedAsset.token.symbol.slice(0, 2)}
                 </Text>
               </View>
-              {/* Show chain badge */}
-              <View style={styles.assetIconChainBadge}>
-                <ChainBadgeMini chainId={effectiveChainId} size="small" />
-              </View>
-            </View>
-            <View>
-              <Text style={styles.assetSymbol}>{currentSymbol}</Text>
-              <View style={styles.assetSubRow}>
-                <Text style={styles.assetBalance}>
-                  Balance: {parseFloat(currentBalance).toFixed(6)}
-                </Text>
-                <Text style={styles.assetChainName}>
-                  on {effectiveNetworkConfig?.name || "Unknown"}
-                </Text>
+              <View>
+                <Text style={[styles.assetSymbol, { color: panelText }]}>{currentSymbol}</Text>
+                <Text style={[styles.assetBalance, { color: panelMuted }]}>Balance: {parseFloat(currentBalance).toFixed(6)}</Text>
               </View>
             </View>
           </View>
-          <Ionicons name="chevron-down" size={20} color="#6B7280" />
-        </TouchableOpacity>
-
-        {/* Recipient field with contact picker */}
-        <View style={styles.recipientContainer}>
-          <View style={styles.recipientInputWrapper}>
-            <Input
-              label="Recipient"
-              placeholder="Address or ENS name"
-              value={recipient}
-              onChangeText={setRecipient}
-              autoCapitalize="none"
-              autoCorrect={false}
-              error={recipientError || undefined}
-              rightIcon={
-                isResolving
-                  ? undefined
-                  : resolvedAddress
-                    ? "checkmark-circle"
-                    : undefined
-              }
+          <View style={styles.amountCardRow}>
+            <TextInput
+              value={amount}
+              onChangeText={(text) => {
+                setAmount(text);
+                validateAmount(text);
+              }}
+              keyboardType="decimal-pad"
+              placeholder="0.00"
+              placeholderTextColor={panelSubtle}
+              style={[styles.amountCardInput, { color: panelText }]}
             />
+            <TouchableOpacity
+              style={[styles.amountCardMax, { backgroundColor: isLight ? "#E8F0EC" : "#1E2E29", borderColor: panelBorder }]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                handleSetMax();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.amountCardMaxText, { color: accentColor }]}>MAX</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={styles.contactPickerButton}
-            onPress={() => setShowContactPicker(true)}
-          >
-            <Ionicons name="people" size={22} color="#569F8C" />
-          </TouchableOpacity>
+          <Text style={[styles.amountCardFiat, { color: panelMuted }]}>{fiatAmount ? `≈ ${fiatAmount}` : " "}</Text>
+          {amountError && <Text style={styles.amountCardError}>{amountError}</Text>}
         </View>
+
+        {/* Recipient field with integrated contact picker button */}
+        <AddressInput
+          label="Recipient"
+          value={recipient}
+          onChangeText={setRecipient}
+          onResolvedAddress={setResolvedAddress}
+          onChainDetected={(detectedId) => {
+            setSelectedChainId(detectedId);
+          }}
+          chainId={selectedChainId}
+          isSolana={isSolanaAccount}
+          onContactsPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          }}
+        />
 
         {/* Show contact name if recipient is a saved contact */}
         {existingContact && resolvedAddress && (
@@ -491,12 +641,6 @@ export default function SendScreen() {
             <Ionicons name="person" size={14} color="#10B981" />
             <Text style={styles.contactBadgeText}>{existingContact.name}</Text>
           </View>
-        )}
-
-        {resolvedAddress && resolvedAddress !== recipient && (
-          <Text style={styles.resolvedAddress}>
-            → {resolvedAddress.slice(0, 10)}...{resolvedAddress.slice(-8)}
-          </Text>
         )}
 
         {/* Save to contacts button - show after resolving a new address */}
@@ -508,35 +652,12 @@ export default function SendScreen() {
               setShowSaveContactModal(true);
             }}
           >
-            <Ionicons name="person-add-outline" size={16} color="#569F8C" />
-            <Text style={styles.saveContactText}>Save to contacts</Text>
+            <Ionicons name="person-add-outline" size={16} color={accentColor} />
+            <Text style={[styles.saveContactText, { color: accentColor }]}>Save to contacts</Text>
           </TouchableOpacity>
         )}
-
-        <View style={styles.amountContainer}>
-          <Input
-            label={`Amount (${currentSymbol})`}
-            placeholder="0.0"
-            value={amount}
-            onChangeText={(text) => {
-              setAmount(text);
-              validateAmount(text);
-            }}
-            keyboardType="decimal-pad"
-            error={amountError || undefined}
-          />
-          <TouchableOpacity style={styles.maxButton} onPress={handleSetMax}>
-            <Text style={styles.maxButtonText}>MAX</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.balanceInfo}>
-          <Text style={styles.balanceLabel}>Available:</Text>
-          <Text style={styles.balanceValue}>
-            {parseFloat(currentBalance).toFixed(6)} {currentSymbol}
-          </Text>
-        </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <View style={styles.footer}>
         <Button
@@ -572,7 +693,7 @@ export default function SendScreen() {
                   balance,
                 })),
               ]}
-              keyExtractor={(item, index) =>
+              keyExtractor={(item) =>
                 item.type === "native" ? "native" : item.token.address
               }
               renderItem={({ item }) => {
@@ -670,14 +791,12 @@ export default function SendScreen() {
         />
       )}
 
-      {/* Contact Picker Modal */}
-      <ContactPicker
-        visible={showContactPicker}
-        onClose={() => setShowContactPicker(false)}
-        onSelectContact={(contact) => {
-          setRecipient(contact.address);
-          setShowContactPicker(false);
-        }}
+      {/* Chain Picker Modal */}
+      <NetworkSelector
+        visible={showChainPicker}
+        selectedChainId={selectedChainId}
+        onSelect={(chainId) => setSelectedChainId(chainId)}
+        onClose={() => setShowChainPicker(false)}
       />
 
       {/* Save Contact Modal */}
@@ -712,6 +831,7 @@ export default function SendScreen() {
               <TouchableOpacity
                 style={[
                   styles.saveContactModalSaveButton,
+                  { backgroundColor: accentColor },
                   !newContactName.trim() &&
                     styles.saveContactModalSaveButtonDisabled,
                 ]}
@@ -756,13 +876,45 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 24,
   },
+  chainSelector: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#1E2E29",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  chainSelectorLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  chainSelectorIcon: {
+    fontSize: 24,
+  },
+  chainSelectorLabel: {
+    color: "#6B7280",
+    fontSize: 11,
+    fontWeight: "500",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  chainSelectorName: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "600",
+    marginTop: 1,
+  },
   assetSelector: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: "#1E2E29",
     borderRadius: 12,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     marginBottom: 16,
   },
   assetInfo: {
@@ -770,69 +922,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  assetIconWrapper: {
-    position: "relative",
-  },
   assetIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#374151",
     alignItems: "center",
     justifyContent: "center",
   },
-  assetIconChainBadge: {
-    position: "absolute",
-    bottom: -2,
-    right: -4,
-  },
   assetIconText: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
   },
   assetSymbol: {
     color: "#FFFFFF",
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
-  },
-  assetSubRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 2,
   },
   assetBalance: {
     color: "#9CA3AF",
     fontSize: 12,
-  },
-  assetChainName: {
-    color: "#6B7280",
-    fontSize: 10,
-    fontStyle: "italic",
-  },
-  resolvedAddress: {
-    color: "#10B981",
-    fontSize: 12,
-    marginTop: -12,
-    marginBottom: 16,
-  },
-  recipientContainer: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-  },
-  recipientInputWrapper: {
-    flex: 1,
-  },
-  contactPickerButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: "#1E2E29",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 28, // Align with input (accounting for label)
+    marginTop: 1,
   },
   contactBadge: {
     flexDirection: "row",
@@ -875,6 +986,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
   },
+  nfcSourceBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#10B98115",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  nfcSourceBadgeText: {
+    color: "#10B981",
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  fiatEquiv: {
+    color: "#9CA3AF",
+    fontSize: 14,
+    textAlign: "right",
+    marginTop: 4,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
   balanceInfo: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -891,6 +1025,85 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 14,
     fontWeight: "500",
+  },
+  amountCard: {
+    backgroundColor: "#141B17",
+    borderWidth: 1,
+    borderColor: "#1F2A24",
+    borderRadius: 20,
+    padding: 16,
+    marginTop: 16,
+  },
+  amountCardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  amountCardLabel: {
+    color: "#9CA3AF",
+    fontSize: 14,
+    marginBottom: 10,
+  },
+  amountCardPills: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 1,
+  },
+  amountCardChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    maxWidth: 140,
+  },
+  amountCardChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  amountCardMetaRow: {
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  amountCardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  amountCardInput: {
+    flex: 1,
+    color: "#FFFFFF",
+    fontSize: 24,
+    fontWeight: "700",
+    paddingVertical: 4,
+  },
+  amountCardMax: {
+    backgroundColor: "#1E2E29",
+    borderWidth: 1,
+    borderColor: "#2D3D38",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  amountCardMaxText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  amountCardFiat: {
+    color: "#9CA3AF",
+    fontSize: 14,
+    marginTop: 8,
+    minHeight: 20,
+  },
+  amountCardError: {
+    color: "#F87171",
+    fontSize: 12,
+    marginTop: 4,
   },
   footer: {
     padding: 24,

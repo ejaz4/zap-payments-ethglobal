@@ -1,6 +1,14 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
+import { ApiProvider } from "@/crypto/provider/api";
 import { useTokenStore } from "@/store/tokens";
-import { TokenBalance, Transaction, useWalletStore } from "@/store/wallet";
+import { useProviderStore } from "@/store/provider";
+import {
+  SOLANA_NETWORK_IDS,
+  TokenBalance,
+  Transaction,
+  getSolanaChainKey,
+  useWalletStore,
+} from "@/store/wallet";
 import { HDNodeWallet, Mnemonic, Wallet } from "ethers";
 import * as ExpoCrypto from "expo-crypto";
 import { SecureStorage } from "./storage";
@@ -363,8 +371,15 @@ export class WalletService {
       store.setLoading(true);
       store.setError(null);
 
-      // Generate a new random wallet
-      const wallet = Wallet.createRandom();
+      // Generate a new random wallet using expo-crypto to avoid
+      // ethers' internal globalThis.crypto check failing on Android
+      const privateKeyBytes = ExpoCrypto.getRandomBytes(32);
+      const privateKeyHex =
+        "0x" +
+        Array.from(privateKeyBytes)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      const wallet = new Wallet(privateKeyHex);
 
       // Check if already exists
       if (
@@ -396,6 +411,86 @@ export class WalletService {
     } finally {
       store.setLoading(false);
     }
+  }
+
+  /**
+   * Create a new Solana account via the configured API.
+   * The API generates the ed25519 keypair; we store the returned private key
+   * in SecureStore and record the address in the wallet store.
+   */
+  static async createSolanaAccount(name?: string): Promise<string | null> {
+    const store = useWalletStore.getState();
+
+    try {
+      store.setLoading(true);
+      store.setError(null);
+
+      const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+      if (!apiBaseUrl) {
+        throw new Error(
+          "No API URL configured. Set one in Settings → API before creating a Solana account.",
+        );
+      }
+
+      const networkId = useProviderStore.getState().selectedApiNetworkId ?? "dynamic-mainnet";
+      const provider = new ApiProvider(apiBaseUrl);
+      const keypair = await provider.createKeypair(networkId);
+      const { address, privateKey, walletId } = keypair;
+
+      if (store.accounts.some((a) => a.address === address)) {
+        throw new Error("Account already exists");
+      }
+
+      // privateKey may be empty in strict Dynamic custody mode — only store if present
+      if (privateKey) {
+        await SecureStorage.savePrivateKey(address, privateKey);
+      }
+
+      const solanaCount = store.accounts.filter(
+        (a) => a.accountType === "solana",
+      ).length;
+
+      store.addAccount({
+        address,
+        name: name ?? `Solana ${solanaCount + 1}`,
+        index: store.accounts.length,
+        isImported: true,
+        accountType: "solana",
+        dynamicWalletId: walletId,
+        networkId,
+      });
+
+      return address;
+    } catch (error) {
+      console.error("[WalletService]: Failed to create Solana account", error);
+      store.setError(
+        error instanceof Error ? error.message : "Failed to create Solana account",
+      );
+      return null;
+    } finally {
+      store.setLoading(false);
+    }
+  }
+
+  /**
+   * Export the locally-stored private key for a non-Dynamic wallet.
+   * Returns null if the account is Dynamic-managed (no local key) or the key isn't found.
+   */
+  static async exportPrivateKey(address: string): Promise<string | null> {
+    const store = useWalletStore.getState();
+    const account = store.accounts.find(
+      (a) => a.address.toLowerCase() === address.toLowerCase(),
+    );
+
+    // Solana wallets are Dynamic-managed — local private key may not exist
+    if (account?.accountType === "solana") {
+      const pk = await SecureStorage.loadPrivateKey(address);
+      // In strict Dynamic custody mode the key is empty/null
+      if (!pk) return null;
+      return pk;
+    }
+
+    return SecureStorage.loadPrivateKey(address);
   }
 
   /**
@@ -532,6 +627,7 @@ export class BalanceService {
   /**
    * Refresh all balances for current account
    * Throttled to prevent API spam - max once every 10 seconds
+   * Handles both EVM and Solana accounts.
    */
   static async refreshBalances(force: boolean = false): Promise<void> {
     const now = Date.now();
@@ -550,7 +646,6 @@ export class BalanceService {
 
     const store = useWalletStore.getState();
     const account = store.accounts[store.selectedAccountIndex];
-    const chainId = store.selectedChainId;
 
     if (!account) return;
 
@@ -558,47 +653,93 @@ export class BalanceService {
       this.isRefreshing = true;
       this.lastRefreshTime = now;
 
-      // Fetch native + all token balances efficiently
-      const tokenStore = useTokenStore.getState();
-      const tokens = tokenStore.getTokensForChain(chainId);
-      const tokenAddresses = tokens.map((t) => t.address);
-
-      const { native, tokens: tokenBalanceMap } =
-        await EthersClient.batchGetAllBalances(
-          tokenAddresses,
-          account.address,
-          chainId,
-        );
-
-      // Update native balance
-      const nativeFormatted = EthersClient.fromWei(native);
-      store.setNativeBalance(account.address, chainId, nativeFormatted);
-
-      // Convert token map to TokenBalance array
-      const tokenBalances: TokenBalance[] = [];
-      for (const token of tokens) {
-        const balance = tokenBalanceMap.get(token.address.toLowerCase()) ?? 0n;
-        const formatted = EthersClient.formatUnits(balance, token.decimals);
-
-        if (parseFloat(formatted) > 0) {
-          tokenBalances.push({
-            address: token.address,
-            symbol: token.symbol,
-            name: token.name,
-            decimals: token.decimals,
-            balance: balance.toString(),
-            balanceFormatted: formatted,
-            chainId,
-          });
-        }
+      if (account.accountType === "solana") {
+        await this.refreshSolanaBalances(account.address);
+      } else {
+        await this.refreshEvmBalances(account.address, store.selectedChainId);
       }
-
-      store.setTokenBalances(account.address, chainId, tokenBalances);
     } catch (error) {
       console.error("[BalanceService]: Failed to refresh balances", error);
     } finally {
       this.isRefreshing = false;
     }
+  }
+
+  /**
+   * Refresh EVM balances for the given address and chain.
+   */
+  private static async refreshEvmBalances(
+    address: string,
+    chainId: ChainId,
+  ): Promise<void> {
+    const store = useWalletStore.getState();
+    const tokenStore = useTokenStore.getState();
+    const tokens = tokenStore.getTokensForChain(chainId);
+    const tokenAddresses = tokens.map((t) => t.address);
+
+    const { native, tokens: tokenBalanceMap } =
+      await EthersClient.batchGetAllBalances(tokenAddresses, address, chainId);
+
+    const nativeFormatted = EthersClient.fromWei(native);
+    store.setNativeBalance(address, chainId, nativeFormatted);
+
+    const tokenBalances: TokenBalance[] = [];
+    for (const token of tokens) {
+      const balance = tokenBalanceMap.get(token.address.toLowerCase()) ?? 0n;
+      const formatted = EthersClient.formatUnits(balance, token.decimals);
+
+      if (parseFloat(formatted) > 0) {
+        tokenBalances.push({
+          address: token.address,
+          symbol: token.symbol,
+          name: token.name,
+          decimals: token.decimals,
+          balance: balance.toString(),
+          balanceFormatted: formatted,
+          chainId,
+        });
+      }
+    }
+
+    store.setTokenBalances(address, chainId, tokenBalances);
+  }
+
+  /**
+   * Refresh Solana native + token balances across all Solana networks via the API.
+   */
+  private static async refreshSolanaBalances(address: string): Promise<void> {
+    const store = useWalletStore.getState();
+    const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+    if (!apiBaseUrl) return;
+
+    const provider = new ApiProvider(apiBaseUrl);
+
+    await Promise.allSettled(
+      SOLANA_NETWORK_IDS.map(async (networkId) => {
+        const chainKey = getSolanaChainKey(networkId);
+        const [nativeResult, tokenResult] = await Promise.allSettled([
+          provider.getNativeBalance(address, networkId),
+          provider.getTokenBalances(address, networkId),
+        ]);
+
+        if (nativeResult.status === "fulfilled") {
+          store.setNativeBalance(address, chainKey, nativeResult.value.amount);
+        }
+
+        if (tokenResult.status === "fulfilled") {
+          const solTokens: TokenBalance[] = tokenResult.value.map((b) => ({
+            address: b.assetId.replace(`token:${networkId}:`, ""),
+            symbol: b.symbol,
+            name: b.symbol,
+            decimals: b.decimals,
+            balance: b.amountAtomic,
+            balanceFormatted: b.amount,
+            chainId: chainKey,
+          }));
+          store.setTokenBalances(address, chainKey, solTokens);
+        }
+      }),
+    );
   }
 
   /**

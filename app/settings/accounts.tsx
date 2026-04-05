@@ -1,3 +1,4 @@
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -13,6 +14,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function AccountsScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const accounts = useWalletStore((s) => s.accounts);
   const selectedIndex = useWalletStore((s) => s.selectedAccountIndex);
@@ -41,7 +44,7 @@ export default function AccountsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -57,6 +60,7 @@ export default function AccountsScreen() {
               style={[
                 styles.accountRow,
                 index === selectedIndex && styles.selectedRow,
+                index === selectedIndex && { borderColor: accentColor },
               ]}
               onPress={() => handleSelectAccount(index)}
             >
@@ -88,8 +92,8 @@ export default function AccountsScreen() {
 
         <View style={styles.addButtons}>
           <TouchableOpacity style={styles.addButton} onPress={handleAddAccount}>
-            <Ionicons name="add-circle-outline" size={24} color="#569F8C" />
-            <Text style={styles.addButtonText}>Add Account</Text>
+            <Ionicons name="add-circle-outline" size={24} color={accentColor} />
+            <Text style={[styles.addButtonText, { color: accentColor }]}>Add Account</Text>
           </TouchableOpacity>
         </View>
 

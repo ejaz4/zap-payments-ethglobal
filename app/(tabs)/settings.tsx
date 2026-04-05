@@ -1,15 +1,18 @@
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import { WalletService } from "@/services/wallet";
+import { hexToRgba, tintedBackground, useAccentColor } from "@/store/appearance";
+import { getCurrencyInfo, useSelectedCurrency } from "@/store/currency";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -17,6 +20,21 @@ export default function SettingsScreen() {
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const hasBackedUp = useWalletStore((s) => s.hasBackedUp);
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const bg = tintedBackground(accentColor);
+  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
+  const textSecondary = isLight ? "#64748B" : "#6B7280";
+  const sectionLabel = isLight ? "#475569" : "#6B7280";
+  const rowIcon = isLight ? "#334155" : "#FFFFFF";
+  const selectedCurrency = useSelectedCurrency();
+  const currencyInfo = getCurrencyInfo(selectedCurrency);
+  const rowAccentStyle = {
+    backgroundColor: hexToRgba(accentColor, 0.14),
+    borderColor: hexToRgba(accentColor, 0.28),
+    borderWidth: 1,
+  };
 
   const handleShowRecoveryPhrase = async () => {
     Alert.alert(
@@ -62,39 +80,102 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Settings</Text>
+        <Text style={[styles.headerTitle, { color: textPrimary }]}>Settings</Text>
       </View>
 
-      <ScrollView style={styles.content}>
-        {/* Account Section */}
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 78 }}>
+        {/* Appearance Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>Appearance</Text>
 
           <TouchableOpacity
-            style={styles.row}
+            style={[styles.row, rowAccentStyle]}
+            onPress={() => router.push("/settings/appearance" as any)}
+          >
+            <View style={styles.rowLeft}>
+              <View
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 12,
+                  backgroundColor: accentColor,
+                }}
+              />
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Accent Colour</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}> 
+                  {accentColor.toUpperCase()}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Merchant Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>Merchant</Text>
+
+          <TouchableOpacity
+            style={[styles.row, rowAccentStyle]}
+            onPress={() => router.push("/(tabs)/merchant" as any)}
+          >
+            <View style={styles.rowLeft}>
+              <Ionicons name="storefront-outline" size={24} color={rowIcon} />
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Merchant Mode</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}> 
+                  Accept payments, manage products
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Account Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>Account</Text>
+
+          <TouchableOpacity
+            style={[styles.row, rowAccentStyle]}
             onPress={() => router.push("/settings/accounts" as any)}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="wallet-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="wallet-outline" size={24} color={rowIcon} />
               <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>Manage Accounts</Text>
-                <Text style={styles.rowSubtitle}>Add or switch accounts</Text>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Manage Accounts</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}>Add or switch accounts</Text>
               </View>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#6B7280" />
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.row, { marginTop: 8 }]}
+            style={[styles.row, rowAccentStyle, { marginTop: 8 }]}
             onPress={() => router.push("/settings/contacts" as any)}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="people-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="people-outline" size={24} color={rowIcon} />
               <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>Contacts</Text>
-                <Text style={styles.rowSubtitle}>Manage saved addresses</Text>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Contacts</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}>Manage saved addresses</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.row, rowAccentStyle, { marginTop: 8 }]}
+            onPress={() => router.push("/settings/ens" as any)}
+          >
+            <View style={styles.rowLeft}>
+              <Ionicons name="finger-print-outline" size={24} color={accentColor} />
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>ENS Identity</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}>Manage your .eth name and records</Text>
               </View>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#6B7280" />
@@ -103,17 +184,17 @@ export default function SettingsScreen() {
 
         {/* Security Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Security</Text>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>Security</Text>
 
           <TouchableOpacity
-            style={styles.row}
+            style={[styles.row, rowAccentStyle]}
             onPress={handleShowRecoveryPhrase}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="key-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="key-outline" size={24} color={rowIcon} />
               <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>Recovery Phrase</Text>
-                <Text style={styles.rowSubtitle}>View your secret phrase</Text>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Recovery Phrase</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}>View your secret phrase</Text>
               </View>
             </View>
             {!hasBackedUp && (
@@ -127,17 +208,17 @@ export default function SettingsScreen() {
 
         {/* Network Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Network</Text>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>Network</Text>
 
           <TouchableOpacity
-            style={styles.row}
+            style={[styles.row, rowAccentStyle]}
             onPress={() => router.push("/settings/networks" as any)}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="globe-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="globe-outline" size={24} color={rowIcon} />
               <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>Network Settings</Text>
-                <Text style={styles.rowSubtitle}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Network Settings</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}> 
                   Configure RPC URLs and networks
                 </Text>
               </View>
@@ -146,14 +227,30 @@ export default function SettingsScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.row, { marginTop: 8 }]}
+            style={[styles.row, rowAccentStyle, { marginTop: 8 }]}
+            onPress={() => router.push("/settings/currency" as any)}
+          >
+            <View style={styles.rowLeft}>
+              <Ionicons name="cash-outline" size={24} color={rowIcon} />
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Display Currency</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}> 
+                  {currencyInfo.flag} {currencyInfo.name} ({currencyInfo.symbol})
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.row, rowAccentStyle, { marginTop: 8 }]}
             onPress={() => router.push("/settings/gas" as any)}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="flame-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="flame-outline" size={24} color={rowIcon} />
               <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>Gas Settings</Text>
-                <Text style={styles.rowSubtitle}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Gas Settings</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}> 
                   Configure gas speed and limits
                 </Text>
               </View>
@@ -162,15 +259,36 @@ export default function SettingsScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.row, { marginTop: 8 }]}
+            style={[styles.row, rowAccentStyle, { marginTop: 8 }]}
             onPress={() => router.push("/settings/tokens" as any)}
           >
             <View style={styles.rowLeft}>
-              <Ionicons name="layers-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="layers-outline" size={24} color={rowIcon} />
               <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>Token List</Text>
-                <Text style={styles.rowSubtitle}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Token List</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}> 
                   Manage and import ERC20 tokens
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#6B7280" />
+          </TouchableOpacity>
+        </View>
+
+        {/* API Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>API Provider</Text>
+
+          <TouchableOpacity
+            style={[styles.row, rowAccentStyle]}
+            onPress={() => router.push("/settings/api" as any)}
+          >
+            <View style={styles.rowLeft}>
+              <Ionicons name="cloud-outline" size={24} color={rowIcon} />
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>API Settings</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}> 
+                  Configure external API base URL
                 </Text>
               </View>
             </View>
@@ -180,18 +298,18 @@ export default function SettingsScreen() {
 
         {/* About Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About</Text>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>About</Text>
 
-          <View style={styles.row}>
+          <View style={[styles.row, rowAccentStyle]}>
             <View style={styles.rowLeft}>
               <Ionicons
                 name="information-circle-outline"
                 size={24}
-                color="#FFFFFF"
+                color={rowIcon}
               />
               <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>Version</Text>
-                <Text style={styles.rowSubtitle}>1.0.0</Text>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Version</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}>1.0.0</Text>
               </View>
             </View>
           </View>
@@ -199,7 +317,7 @@ export default function SettingsScreen() {
 
         {/* Danger Zone */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Danger Zone</Text>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>Danger Zone</Text>
 
           <TouchableOpacity
             style={styles.dangerRow}

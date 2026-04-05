@@ -4,11 +4,12 @@
  * Reads active transaction from smart contract and allows payment
  */
 
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import { formatUnits } from "ethers";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +30,7 @@ import { TransactionService } from "@/services/wallet";
 
 import { ChainId, DEFAULT_NETWORKS } from "@/app/profiles/client";
 import { Button } from "@/components/ui";
+import { useFiatValue } from "@/hooks/use-fiat-value";
 import {
   useNativeBalance,
   useSelectedAccount,
@@ -58,17 +60,20 @@ const parseItemizedList = (
 };
 
 export default function NfcPaymentScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const params = useLocalSearchParams<{
     address: string;
     chainId: string;
     amount: string;
     message: string;
+    autopay: string;
+    autopayLimit: string;
   }>();
 
   const selectedAccount = useSelectedAccount();
   const storeChainId = useWalletStore((s) => s.selectedChainId);
-  const nativeBalance = useNativeBalance();
 
   // Parse params
   const contractAddress =
@@ -76,8 +81,12 @@ export default function NfcPaymentScreen() {
   const chainId = params.chainId
     ? (parseInt(params.chainId) as ChainId)
     : storeChainId;
+
+  // Use the payment chain's balance, not the globally selected chain
+  const nativeBalance = useNativeBalance(undefined, chainId);
   const requestedAmount = params.amount || "";
-  const message = params.message || "";
+  const autopayParam = params.autopay === "true";
+  const autopayLimit = params.autopayLimit ? parseFloat(params.autopayLimit) : null;
 
   // State
   const [status, setStatus] = useState<PaymentStatus>("loading");
@@ -99,6 +108,7 @@ export default function NfcPaymentScreen() {
   const amount = activeTransaction
     ? formatUnits(activeTransaction.amount, decimals)
     : requestedAmount;
+  const fiatAmount = useFiatValue(amount, chainId);
 
   // Validate address
   const isValidAddress =
@@ -201,6 +211,8 @@ export default function NfcPaymentScreen() {
     shouldPollRef.current = shouldPoll;
     console.log("[NfcPayment] Polling enabled:", shouldPoll, "Status:", status);
   }, [status]);
+
+  const autoPayFiredRef = useRef(false);
 
   const handleConfirm = useCallback(async () => {
     if (
@@ -317,6 +329,20 @@ export default function NfcPaymentScreen() {
     chainId,
   ]);
 
+  // Auto-pay: as soon as the contract tx loads (status → "preview"), fire
+  // immediately if the amount is within the limit — no confirmation screen shown.
+  useEffect(() => {
+    if (!autopayParam || autoPayFiredRef.current) return;
+    if (status !== "preview") return;
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) return;
+    if (autopayLimit === null || amountNum <= autopayLimit) {
+      console.log("[NfcPayment] Auto-pay firing:", amountNum, "limit:", autopayLimit);
+      autoPayFiredRef.current = true;
+      handleConfirm();
+    }
+  }, [status, amount, autopayParam, autopayLimit, handleConfirm]);
+
   const handleCancel = () => {
     router.back();
   };
@@ -330,9 +356,9 @@ export default function NfcPaymentScreen() {
   // Render based on status
   if (status === "loading") {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.resultContainer}>
-          <ActivityIndicator size="large" color="#569F8C" />
+          <ActivityIndicator size="large" color={accentColor} />
           <Text style={styles.sendingText}>Loading Payment Details...</Text>
           <Text style={styles.sendingSubtext}>Reading from smart contract</Text>
         </View>
@@ -342,7 +368,7 @@ export default function NfcPaymentScreen() {
 
   if (status === "already-paid") {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.resultContainer}>
           <Animated.View
             entering={ZoomIn.duration(300)}
@@ -412,18 +438,18 @@ export default function NfcPaymentScreen() {
 
   if (status === "confirming") {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.resultContainer}>
           <Animated.View
             entering={ZoomIn.duration(300)}
             style={styles.confirmingIcon}
           >
-            <ActivityIndicator size="large" color="#569F8C" />
+            <ActivityIndicator size="large" color={accentColor} />
           </Animated.View>
 
           <Animated.Text
             entering={FadeIn.delay(200)}
-            style={styles.confirmingTitle}
+            style={[styles.confirmingTitle, { color: accentColor }]}
           >
             Confirming Payment...
           </Animated.Text>
@@ -467,7 +493,7 @@ export default function NfcPaymentScreen() {
 
   if (status === "success") {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.resultContainer}>
           <Animated.View
             entering={ZoomIn.duration(300)}
@@ -520,7 +546,7 @@ export default function NfcPaymentScreen() {
 
   if (status === "error") {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.resultContainer}>
           <Animated.View
             entering={ZoomIn.duration(300)}
@@ -556,9 +582,9 @@ export default function NfcPaymentScreen() {
 
   if (status === "sending") {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.resultContainer}>
-          <ActivityIndicator size="large" color="#569F8C" />
+          <ActivityIndicator size="large" color={accentColor} />
           <Text style={styles.sendingText}>Sending Payment...</Text>
           <Text style={styles.sendingSubtext}>
             Please wait while the transaction is being processed
@@ -581,7 +607,7 @@ export default function NfcPaymentScreen() {
       items.length > 0);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={handleCancel} style={styles.closeButton}>
           <Ionicons name="close" size={28} color="#FFFFFF" />
@@ -630,8 +656,8 @@ export default function NfcPaymentScreen() {
                   <View style={styles.card}>
                     <Text style={styles.cardLabel}>Merchant</Text>
                     <View style={styles.merchantRow}>
-                      <View style={styles.merchantIcon}>
-                        <Ionicons name="storefront" size={24} color="#569F8C" />
+                      <View style={[styles.merchantIcon, { backgroundColor: accentColor + "20" }]}>
+                        <Ionicons name="storefront" size={24} color={accentColor} />
                       </View>
                       <View style={styles.merchantInfo}>
                         <Text style={styles.merchantName}>
@@ -687,6 +713,9 @@ export default function NfcPaymentScreen() {
             <Text style={styles.amountValue}>
               {amount || "0"} {symbol}
             </Text>
+            {fiatAmount && (
+              <Text style={styles.amountFiat}>≈ {fiatAmount}</Text>
+            )}
             {!hasSufficientBalance && amount && (
               <View style={styles.insufficientBadge}>
                 <Ionicons name="warning" size={14} color="#F59E0B" />
@@ -855,6 +884,11 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 32,
     fontWeight: "700",
+  },
+  amountFiat: {
+    color: "#9CA3AF",
+    fontSize: 15,
+    marginTop: 4,
   },
   insufficientBadge: {
     flexDirection: "row",

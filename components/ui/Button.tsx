@@ -1,14 +1,23 @@
 import { Colors } from "@/constants/theme";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useAccentColor } from "@/store/appearance";
+import * as Haptics from "expo-haptics";
 import React from "react";
 import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  TextStyle,
-  TouchableOpacity,
-  TouchableOpacityProps,
-  ViewStyle,
+    ActivityIndicator,
+    GestureResponderEvent,
+    StyleSheet,
+    Text,
+    TextStyle,
+    TouchableOpacity,
+    TouchableOpacityProps,
+    ViewStyle,
 } from "react-native";
+import Animated, {
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+} from "react-native-reanimated";
 
 interface ButtonProps extends TouchableOpacityProps {
   title: string;
@@ -19,6 +28,8 @@ interface ButtonProps extends TouchableOpacityProps {
   fullWidth?: boolean;
 }
 
+const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
+
 export function Button({
   title,
   variant = "primary",
@@ -27,11 +38,36 @@ export function Button({
   disabled = false,
   fullWidth = true,
   style,
+  onPressIn,
+  onPressOut,
   ...props
 }: ButtonProps) {
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const handlePressIn = (e: GestureResponderEvent) => {
+    scale.value = withSpring(0.96, { damping: 20, stiffness: 400 });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onPressIn?.(e);
+  };
+
+  const handlePressOut = (e: GestureResponderEvent) => {
+    scale.value = withSpring(1, { damping: 20, stiffness: 400 });
+    onPressOut?.(e);
+  };
+
   const buttonStyles: ViewStyle[] = [
     styles.base,
     styles[variant],
+    variant === "primary" && { backgroundColor: accentColor },
+    variant === "secondary" && { backgroundColor: isLight ? "#E8F0EC" : "#1E2E29" },
+    variant === "outline" && { borderColor: isLight ? "#CAD8D1" : "#374151" },
     styles[`${size}Button`],
     fullWidth && styles.fullWidth,
     (disabled || loading) && styles.disabled,
@@ -40,24 +76,29 @@ export function Button({
   const textStyles: TextStyle[] = [
     styles.text,
     styles[`${variant}Text`],
+    variant === "ghost" && { color: accentColor },
+    variant === "secondary" && { color: isLight ? "#11181C" : "#FFFFFF" },
+    variant === "outline" && { color: isLight ? "#11181C" : "#FFFFFF" },
     styles[`${size}Text`],
   ].filter(Boolean) as TextStyle[];
 
   return (
-    <TouchableOpacity
-      style={[buttonStyles, style]}
+    <AnimatedTouchable
+      style={[buttonStyles, style, animatedStyle]}
       disabled={disabled || loading}
-      activeOpacity={0.7}
+      activeOpacity={1}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       {...props}
     >
       {loading ? (
         <ActivityIndicator
-          color={variant === "primary" ? "#fff" : Colors.dark.tint}
+          color={variant === "primary" ? "#fff" : Colors[scheme].tint}
         />
       ) : (
         <Text style={textStyles}>{title}</Text>
       )}
-    </TouchableOpacity>
+    </AnimatedTouchable>
   );
 }
 

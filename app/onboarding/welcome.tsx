@@ -1,4 +1,6 @@
 import { Button } from "@/components/ui";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -7,6 +9,13 @@ import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function WelcomeScreen() {
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const bg = tintedBackground(accentColor);
+  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
+  const textMuted = isLight ? "#64748B" : "#9CA3AF";
+  const cardBg = isLight ? "#FFFFFF" : "#1E2E29";
   const router = useRouter();
   const accounts = useWalletStore((s) => s.accounts);
   const setIsAddingAccount = useWalletStore((s) => s.setIsAddingAccount);
@@ -20,20 +29,20 @@ export default function WelcomeScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.content}>
         <View style={styles.logoContainer}>
-          <View style={styles.logo}>
+          <View style={[styles.logo, { backgroundColor: cardBg }]}>
             <Ionicons
               name={isAddingAccount ? "person-add" : "flash"}
               size={64}
-              color="#569F8C"
+              color={accentColor}
             />
           </View>
-          <Text style={styles.title}>
+          <Text style={[styles.title, { color: textPrimary }]}>
             {isAddingAccount ? "Add Account" : "Zap Wallet"}
           </Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.subtitle, { color: textMuted }]}> 
             {isAddingAccount
               ? "Create a new account or import an existing one"
               : "Your simple, secure Ethereum wallet"}
@@ -46,16 +55,19 @@ export default function WelcomeScreen() {
               icon="wallet-outline"
               title="Multi-Chain Support"
               description="Ethereum, Polygon, Arbitrum, and more"
+              isLight={isLight}
             />
             <FeatureRow
               icon="shield-checkmark-outline"
               title="Secure Storage"
               description="Your keys never leave your device"
+              isLight={isLight}
             />
             <FeatureRow
               icon="flash-outline"
               title="Fast & Simple"
               description="Send and receive crypto in seconds"
+              isLight={isLight}
             />
           </View>
         )}
@@ -66,11 +78,13 @@ export default function WelcomeScreen() {
               icon="add-circle-outline"
               title="Create New Account"
               description="Derive a new account from your recovery phrase"
+              isLight={isLight}
             />
             <FeatureRow
               icon="key-outline"
               title="Import Private Key"
               description="Add an account using a private key"
+              isLight={isLight}
             />
           </View>
         )}
@@ -100,19 +114,26 @@ function FeatureRow({
   icon,
   title,
   description,
+  isLight,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   description: string;
+  isLight: boolean;
 }) {
+  const accentColor = useAccentColor();
+  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
+  const textMuted = isLight ? "#64748B" : "#9CA3AF";
+  const cardBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const iconBg = isLight ? "#EEF4F1" : "#374151";
   return (
-    <View style={styles.featureRow}>
-      <View style={styles.featureIcon}>
-        <Ionicons name={icon} size={24} color="#569F8C" />
+    <View style={[styles.featureRow, { backgroundColor: cardBg }]}> 
+      <View style={[styles.featureIcon, { backgroundColor: iconBg }]}> 
+        <Ionicons name={icon} size={24} color={accentColor} />
       </View>
       <View style={styles.featureText}>
-        <Text style={styles.featureTitle}>{title}</Text>
-        <Text style={styles.featureDescription}>{description}</Text>
+        <Text style={[styles.featureTitle, { color: textPrimary }]}>{title}</Text>
+        <Text style={[styles.featureDescription, { color: textMuted }]}>{description}</Text>
       </View>
     </View>
   );

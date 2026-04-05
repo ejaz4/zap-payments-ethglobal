@@ -25,6 +25,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { getChainName } from "@/app/nfc/context";
 import { ChainId } from "@/app/profiles/client";
+import { useAccentColor } from "@/store/appearance";
 import { useWalletStore } from "@/store/wallet";
 
 interface QRPayload {
@@ -35,6 +36,7 @@ interface QRPayload {
 
 export default function QRScanScreen() {
   const router = useRouter();
+  const accentColor = useAccentColor();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);
 
@@ -142,7 +144,7 @@ export default function QRScanScreen() {
             Please enable camera access to scan QR codes for payments.
           </Text>
           <TouchableOpacity
-            style={styles.enableButton}
+            style={[styles.enableButton, { backgroundColor: accentColor }]}
             onPress={requestPermission}
           >
             <Text style={styles.enableButtonText}>Enable Camera</Text>
@@ -185,10 +187,10 @@ export default function QRScanScreen() {
         {/* Scanner Overlay */}
         <View style={styles.scannerOverlay}>
           <View style={styles.scannerFrame}>
-            <View style={[styles.corner, styles.cornerTL]} />
-            <View style={[styles.corner, styles.cornerTR]} />
-            <View style={[styles.corner, styles.cornerBL]} />
-            <View style={[styles.corner, styles.cornerBR]} />
+            <View style={[styles.corner, styles.cornerTL, { borderColor: accentColor }]} />
+            <View style={[styles.corner, styles.cornerTR, { borderColor: accentColor }]} />
+            <View style={[styles.corner, styles.cornerBL, { borderColor: accentColor }]} />
+            <View style={[styles.corner, styles.cornerBR, { borderColor: accentColor }]} />
           </View>
         </View>
       </View>
@@ -254,7 +256,7 @@ export default function QRScanScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.modalPrimaryButton}
+                style={[styles.modalPrimaryButton, { backgroundColor: accentColor }]}
                 onPress={handleSwitchChain}
               >
                 <Text style={styles.modalPrimaryButtonText}>

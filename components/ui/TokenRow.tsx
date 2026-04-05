@@ -1,8 +1,17 @@
+import { PriceService } from "@/services/price";
+import { useSelectedCurrency } from "@/store/currency";
 import { TokenBalance } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { ChainBadgeMini, getNetworkMeta } from "./NetworkSelector";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
+import { ChainBadgeMini } from "./NetworkSelector";
+import type { ChainId } from "@/app/profiles/client";
 
 interface TokenRowProps {
   token: TokenBalance;
@@ -17,6 +26,13 @@ export function TokenRow({
   showChevron = false,
   showChainBadge = true,
 }: TokenRowProps) {
+  const currency = useSelectedCurrency();
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
   const formattedBalance = parseFloat(token.balanceFormatted).toLocaleString(
     undefined,
     {
@@ -26,22 +42,15 @@ export function TokenRow({
   );
 
   const formattedValue = token.valueUsd
-    ? `$${token.valueUsd.toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })}`
+    ? PriceService.formatValue(token.valueUsd, currency)
     : null;
 
-  const Container = onPress ? TouchableOpacity : View;
-  const networkMeta = getNetworkMeta(token.chainId);
-
-  return (
-    <Container style={styles.container} onPress={onPress} activeOpacity={0.7}>
+  const content = (
+    <>
       <View style={styles.iconWrapper}>
         <View style={styles.iconContainer}>
           <Text style={styles.iconText}>{token.symbol.charAt(0)}</Text>
         </View>
-        {/* Chain badge positioned at bottom-right of icon, like Rainbow */}
         {showChainBadge && (
           <View style={styles.chainBadgePosition}>
             <ChainBadgeMini chainId={token.chainId} size="small" />
@@ -62,7 +71,30 @@ export function TokenRow({
           <Ionicons name="chevron-forward" size={20} color="#6B7280" />
         )}
       </View>
-    </Container>
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.container}>{content}</View>;
+  }
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <TouchableOpacity
+        style={styles.container}
+        onPress={onPress}
+        activeOpacity={1}
+        onPressIn={() => {
+          scale.value = withSpring(0.97, { damping: 20, stiffness: 400 });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }}
+        onPressOut={() => {
+          scale.value = withSpring(1, { damping: 20, stiffness: 400 });
+        }}
+      >
+        {content}
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -71,6 +103,7 @@ interface NativeTokenRowProps {
   name: string;
   balance: string;
   valueUsd?: number;
+  chainId?: ChainId;
   onPress?: () => void;
 }
 
@@ -79,26 +112,36 @@ export function NativeTokenRow({
   name,
   balance,
   valueUsd,
+  chainId,
   onPress,
 }: NativeTokenRowProps) {
+  const currency = useSelectedCurrency();
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
   const formattedBalance = parseFloat(balance).toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6,
   });
 
   const formattedValue = valueUsd
-    ? `$${valueUsd.toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })}`
+    ? PriceService.formatValue(valueUsd, currency)
     : null;
 
-  const Container = onPress ? TouchableOpacity : View;
-
-  return (
-    <Container style={styles.container} onPress={onPress} activeOpacity={0.7}>
-      <View style={[styles.iconContainer, styles.nativeIcon]}>
-        <Ionicons name="diamond" size={24} color="#FFFFFF" />
+  const content = (
+    <>
+      <View style={styles.iconWrapper}>
+        <View style={[styles.iconContainer, styles.nativeIcon]}>
+          <Ionicons name="diamond" size={24} color="#FFFFFF" />
+        </View>
+        {chainId !== undefined && (
+          <View style={styles.chainBadgePosition}>
+            <ChainBadgeMini chainId={chainId} size="small" />
+          </View>
+        )}
       </View>
 
       <View style={styles.info}>
@@ -111,7 +154,30 @@ export function NativeTokenRow({
       <View style={styles.valueContainer}>
         {formattedValue && <Text style={styles.value}>{formattedValue}</Text>}
       </View>
-    </Container>
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.container}>{content}</View>;
+  }
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <TouchableOpacity
+        style={styles.container}
+        onPress={onPress}
+        activeOpacity={1}
+        onPressIn={() => {
+          scale.value = withSpring(0.97, { damping: 20, stiffness: 400 });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }}
+        onPressOut={() => {
+          scale.value = withSpring(1, { damping: 20, stiffness: 400 });
+        }}
+      >
+        {content}
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 

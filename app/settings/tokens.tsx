@@ -1,3 +1,4 @@
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { ChainId, DEFAULT_NETWORKS, EthersClient } from "@/app/profiles/client";
 import { DEFAULT_TOKENS, getTokenKey, TokenInfo } from "@/config/tokens";
 import { CustomToken, useTokenStore } from "@/store/tokens";
@@ -8,6 +9,7 @@ import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,6 +20,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function TokensSettingsScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
 
@@ -177,7 +181,7 @@ export default function TokensSettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]} edges={["top"]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -186,6 +190,7 @@ export default function TokensSettingsScreen() {
         <View style={{ width: 24 }} />
       </View>
 
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <ScrollView style={styles.content}>
         {/* Current Network Info */}
         <View style={styles.networkInfo}>
@@ -198,11 +203,11 @@ export default function TokensSettingsScreen() {
         {/* Import Token Section */}
         {!showImport ? (
           <TouchableOpacity
-            style={styles.importButton}
+            style={[styles.importButton, { borderColor: accentColor }]}
             onPress={() => setShowImport(true)}
           >
-            <Ionicons name="add-circle-outline" size={24} color="#569F8C" />
-            <Text style={styles.importButtonText}>Import Custom Token</Text>
+            <Ionicons name="add-circle-outline" size={24} color={accentColor} />
+            <Text style={[styles.importButtonText, { color: accentColor }]}>Import Custom Token</Text>
           </TouchableOpacity>
         ) : (
           <View style={styles.importSection}>
@@ -269,6 +274,7 @@ export default function TokensSettingsScreen() {
                 <TouchableOpacity
                   style={[
                     styles.lookupButton,
+                    { backgroundColor: accentColor },
                     isLoading && styles.lookupButtonDisabled,
                   ]}
                   onPress={handleLookupToken}
@@ -348,6 +354,7 @@ export default function TokensSettingsScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -386,7 +393,7 @@ function TokenListItem({
             <Ionicons name="checkmark-circle" size={14} color="#10B981" />
           )}
           {isCustom && (
-            <View style={styles.customBadge}>
+            <View style={[styles.customBadge, { backgroundColor: accentColor }]}>
               <Text style={styles.customBadgeText}>Custom</Text>
             </View>
           )}

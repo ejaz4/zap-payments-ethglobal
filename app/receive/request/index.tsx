@@ -10,6 +10,7 @@ import {
 } from "@/store/payment-request";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
@@ -67,6 +68,8 @@ const getTokenOptions = (chainId: ChainId): TokenOption[] => {
 };
 
 export default function CreatePaymentRequestScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
@@ -283,7 +286,7 @@ export default function CreatePaymentRequestScreen() {
 
   if (!selectedAccount) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No wallet found</Text>
         </View>
@@ -292,7 +295,7 @@ export default function CreatePaymentRequestScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -303,7 +306,7 @@ export default function CreatePaymentRequestScreen() {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior="padding"
       >
         <ScrollView
           style={styles.scrollView}
@@ -317,7 +320,7 @@ export default function CreatePaymentRequestScreen() {
                 <TouchableOpacity
                   onPress={() => setShowContractInput(!showContractInput)}
                 >
-                  <Text style={styles.editButton}>
+                  <Text style={[styles.editButton, { color: accentColor }]}>
                     {showContractInput ? "Hide" : "Edit"}
                   </Text>
                 </TouchableOpacity>
@@ -467,7 +470,7 @@ export default function CreatePaymentRequestScreen() {
                 keyboardType="decimal-pad"
               />
               <TouchableOpacity
-                style={styles.addButton}
+                style={[styles.addButton, { backgroundColor: accentColor }]}
                 onPress={handleAddItem}
               >
                 <Ionicons name="add" size={20} color="#FFFFFF" />
@@ -516,7 +519,7 @@ export default function CreatePaymentRequestScreen() {
                   style={[
                     styles.tokenOption,
                     selectedToken.address === token.address &&
-                      styles.tokenOptionSelected,
+                      [styles.tokenOptionSelected, { borderColor: accentColor }],
                   ]}
                   onPress={() => {
                     setSelectedToken(token);
@@ -530,7 +533,7 @@ export default function CreatePaymentRequestScreen() {
                     )}
                   </View>
                   {selectedToken.address === token.address && (
-                    <Ionicons name="checkmark" size={20} color="#569F8C" />
+                    <Ionicons name="checkmark" size={20} color={accentColor} />
                   )}
                 </TouchableOpacity>
               ))}

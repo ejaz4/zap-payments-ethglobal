@@ -1,3 +1,4 @@
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import {
   DEFAULT_GAS_LIMITS,
   GasSpeed,
@@ -9,6 +10,7 @@ import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
   ScrollView,
   StyleSheet,
   Text,
@@ -73,6 +75,8 @@ const TRANSACTION_TYPES: {
 ];
 
 export default function GasSettingsScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
 
   const defaultSpeed = useGasStore((s) => s.defaultSpeed);
@@ -148,7 +152,7 @@ export default function GasSettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -157,6 +161,7 @@ export default function GasSettingsScreen() {
         <View style={{ width: 24 }} />
       </View>
 
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <ScrollView style={styles.content}>
         {/* Default Speed Section */}
         <View style={styles.section}>
@@ -172,6 +177,7 @@ export default function GasSettingsScreen() {
                 style={[
                   styles.speedCard,
                   defaultSpeed === option.speed && styles.speedCardActive,
+                  defaultSpeed === option.speed && { borderColor: accentColor },
                 ]}
                 onPress={() => handleSpeedSelect(option.speed)}
               >
@@ -180,6 +186,7 @@ export default function GasSettingsScreen() {
                   style={[
                     styles.speedLabel,
                     defaultSpeed === option.speed && styles.speedLabelActive,
+                    defaultSpeed === option.speed && { color: accentColor },
                   ]}
                 >
                   {option.label}
@@ -229,7 +236,7 @@ export default function GasSettingsScreen() {
               </Text>
             </View>
             <View
-              style={[styles.toggle, showGasDetails && styles.toggleActive]}
+              style={[styles.toggle, showGasDetails && styles.toggleActive, showGasDetails && { backgroundColor: accentColor }]}
             >
               <View
                 style={[
@@ -251,7 +258,7 @@ export default function GasSettingsScreen() {
               </Text>
             </View>
             <View
-              style={[styles.toggle, preferLegacyGas && styles.toggleActive]}
+              style={[styles.toggle, preferLegacyGas && styles.toggleActive, preferLegacyGas && { backgroundColor: accentColor }]}
             >
               <View
                 style={[
@@ -294,7 +301,7 @@ export default function GasSettingsScreen() {
                   </View>
                   <View style={styles.txTypeRight}>
                     {hasCustom && (
-                      <View style={styles.customBadge}>
+                      <View style={[styles.customBadge, { backgroundColor: accentColor }]}>
                         <Text style={styles.customBadgeText}>Custom</Text>
                       </View>
                     )}
@@ -356,7 +363,7 @@ export default function GasSettingsScreen() {
                         </TouchableOpacity>
                       )}
                       <TouchableOpacity
-                        style={styles.saveButton}
+                        style={[styles.saveButton, { backgroundColor: accentColor }]}
                         onPress={() => handleSaveCustomConfig(txType.type)}
                       >
                         <Text style={styles.saveButtonText}>Save</Text>
@@ -380,6 +387,7 @@ export default function GasSettingsScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

@@ -9,6 +9,7 @@ import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useAccentColor } from "@/store/appearance";
 
 interface SendOptionProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -24,9 +25,11 @@ function SendOption({
   title,
   subtitle,
   onPress,
-  iconColor = "#569F8C",
+  iconColor: iconColorProp,
   delay = 0,
 }: SendOptionProps) {
+  const defaultColor = useAccentColor();
+  const iconColor = iconColorProp ?? defaultColor;
   return (
     <Animated.View entering={FadeInDown.delay(delay).duration(400)}>
       <TouchableOpacity style={styles.optionCard} onPress={onPress}>
@@ -47,6 +50,7 @@ function SendOption({
 
 export default function SendOptionsScreen() {
   const router = useRouter();
+  const accentColor = useAccentColor();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -71,7 +75,7 @@ export default function SendOptionsScreen() {
           title="Regular Send"
           subtitle="Send crypto to any wallet address"
           onPress={() => router.push("/send/transfer" as any)}
-          iconColor="#569F8C"
+          iconColor={accentColor}
           delay={100}
         />
 

@@ -1,3 +1,4 @@
+export { AddressInput } from "./AddressInput";
 export { ApprovalModal } from "./ApprovalModal";
 export { Button } from "./Button";
 export { ContactPicker } from "./ContactPicker";

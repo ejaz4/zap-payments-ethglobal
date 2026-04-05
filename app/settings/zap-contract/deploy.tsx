@@ -1,3 +1,4 @@
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { EthersClient } from "@/app/profiles/client";
 import { Button } from "@/components/ui";
 import { ZapContractService } from "@/services/zap-contract";
@@ -22,6 +23,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 type DeploymentState = "ready" | "deploying" | "success" | "error";
 
 export default function DeployZapContractScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
@@ -104,7 +107,7 @@ export default function DeployZapContractScreen() {
 
   if (!selectedAccount) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No wallet found</Text>
         </View>
@@ -113,7 +116,7 @@ export default function DeployZapContractScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -145,7 +148,7 @@ export default function DeployZapContractScreen() {
         {deployState === "ready" && (
           <>
             <View style={styles.iconContainer}>
-              <Ionicons name="rocket-outline" size={64} color="#569F8C" />
+              <Ionicons name="rocket-outline" size={64} color={accentColor} />
             </View>
 
             <Text style={styles.title}>Deploy Your Zap Contract</Text>
@@ -190,7 +193,7 @@ export default function DeployZapContractScreen() {
               <Switch
                 value={autoWithdraw}
                 onValueChange={setAutoWithdraw}
-                trackColor={{ false: "#3F3F46", true: "#569F8C" }}
+                trackColor={{ false: "#3F3F46", true: accentColor }}
                 thumbColor="#FFFFFF"
               />
             </View>
@@ -215,7 +218,7 @@ export default function DeployZapContractScreen() {
         {/* Deploying State */}
         {deployState === "deploying" && (
           <View style={styles.statusContainer}>
-            <ActivityIndicator size="large" color="#569F8C" />
+            <ActivityIndicator size="large" color={accentColor} />
             <Text style={styles.statusTitle}>Deploying Contract...</Text>
             <Text style={styles.statusDescription}>
               Please wait while your contract is being deployed to the
@@ -231,7 +234,7 @@ export default function DeployZapContractScreen() {
               </View>
               <View style={styles.step}>
                 <View style={styles.stepIconActive}>
-                  <ActivityIndicator size="small" color="#569F8C" />
+                  <ActivityIndicator size="small" color={accentColor} />
                 </View>
                 <Text style={styles.stepTextActive}>
                   Waiting for confirmation

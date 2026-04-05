@@ -1,24 +1,47 @@
 import { ChainId, DEFAULT_NETWORKS } from "@/app/profiles/client";
+import { TransactionService } from "@/services/wallet";
+import { useAccentColor } from "@/store/appearance";
+import { SOLANA_CHAIN_KEYS, useWalletStore } from "@/store/wallet";
 import { router } from "expo-router";
 import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
+    createContext,
+    useContext,
+    useEffect,
+    useRef,
+    useState,
 } from "react";
-import { Alert } from "react-native";
+import { Alert, Modal, StyleSheet, Text, View } from "react-native";
 import NfcManager, { Ndef, NfcTech } from "react-native-nfc-manager";
+import Animated, {
+    Easing,
+    FadeIn,
+    FadeOut,
+    ZoomIn,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withSequence,
+    withTiming,
+} from "react-native-reanimated";
 
 /**
  * Parsed NFC payment data from terminal
  * Expected payload format: {"chainId": 88882, "address": "0x...", "network": "ethereum"}
+ * Zap Pay HCE format adds: {"type": "zap-pay", "amount": "1.5"} for direct wallet payments
  */
 export interface NfcPaymentData {
   chainId: number; // Chain ID from payload
-  address: string; // Contract/recipient address
-  network: string; // Network type (always "ethereum" for EVM)
+  address: string; // Contract address (contract) or wallet address (zap-pay)
+  network: string; // Network type ("ethereum" or "solana")
   raw: string; // Raw JSON string
+  /** "zap-pay" = direct wallet tap-to-pay via HCE; "contract" = smart contract terminal */
+  type: "zap-pay" | "contract";
+  /** Requested amount for zap-pay tags (native currency string) */
+  amount?: string;
+  /** Optional token address for zap-pay token requests */
+  tokenAddress?: string;
+  /** Optional token symbol for UI/debug */
+  tokenSymbol?: string;
 }
 
 interface NfcContextType {
@@ -57,13 +80,17 @@ export const useNfc = () => useContext(NfcContext);
  * Check if a chain ID is known/supported
  */
 export const isKnownChainId = (chainId: number): boolean => {
-  return chainId in DEFAULT_NETWORKS;
+  const isEvm = chainId in DEFAULT_NETWORKS;
+  const isSolana = Object.values(SOLANA_CHAIN_KEYS).includes(chainId as ChainId);
+  return isEvm || isSolana;
 };
 
 /**
  * Get chain name from chain ID
  */
 export const getChainName = (chainId: number): string => {
+  if (chainId === SOLANA_CHAIN_KEYS["dynamic-mainnet"]) return "Solana";
+  if (chainId === SOLANA_CHAIN_KEYS["dynamic-testnet"]) return "Solana Devnet";
   const network = DEFAULT_NETWORKS[chainId as ChainId];
   return network?.name || `Unknown Chain (${chainId})`;
 };
@@ -79,6 +106,49 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
   const listeningRef = useRef(false);
   const lastTagIdRef = useRef<string | null>(null);
   const isOnPayScreenRef = useRef(false);
+
+  const accentColor = useAccentColor();
+
+  // Access wallet state for auto-pay
+  const accounts = useWalletStore((s) => s.accounts);
+  const selectedAccountIndex = useWalletStore((s) => s.selectedAccountIndex);
+  const selectedAccount = accounts[selectedAccountIndex] ?? null;
+
+  // Auto-pay overlay state
+  type AutoPayOverlay = "hidden" | "sending" | "success" | "error";
+  const [autoPayOverlay, setAutoPayOverlay] = useState<AutoPayOverlay>("hidden");
+  const [autoPayMeta, setAutoPayMeta] = useState<{ amount: string; symbol: string } | null>(null);
+
+  // Ring pulse animation for the sending state
+  const ringScale = useSharedValue(1);
+  const ringOpacity = useSharedValue(0.6);
+
+  useEffect(() => {
+    if (autoPayOverlay === "sending") {
+      ringScale.value = withRepeat(
+        withSequence(
+          withTiming(1.6, { duration: 700, easing: Easing.out(Easing.ease) }),
+          withTiming(1, { duration: 0 }),
+        ),
+        -1,
+      );
+      ringOpacity.value = withRepeat(
+        withSequence(
+          withTiming(0, { duration: 700 }),
+          withTiming(0.6, { duration: 0 }),
+        ),
+        -1,
+      );
+    } else {
+      ringScale.value = withTiming(1, { duration: 200 });
+      ringOpacity.value = withTiming(0, { duration: 200 });
+    }
+  }, [autoPayOverlay]);
+
+  const ringStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: ringScale.value }],
+    opacity: ringOpacity.value,
+  }));
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -163,8 +233,8 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
         return null;
       }
 
-      // Only support EVM networks
-      if (data.network !== "ethereum") {
+      // Support EVM and Solana payloads
+      if (data.network !== "ethereum" && data.network !== "solana") {
         console.log("[NFC] Unsupported network type:", data.network);
         return null;
       }
@@ -176,10 +246,18 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
         return null;
       }
 
-      // Validate address format (basic hex check)
-      if (!data.address.startsWith("0x") || data.address.length !== 42) {
-        console.log("[NFC] Invalid address format:", data.address);
-        return null;
+      // Validate address format by network
+      if (data.network === "ethereum") {
+        if (!data.address.startsWith("0x") || data.address.length !== 42) {
+          console.log("[NFC] Invalid EVM address format:", data.address);
+          return null;
+        }
+      } else {
+        const isSolanaAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(data.address));
+        if (!isSolanaAddress) {
+          console.log("[NFC] Invalid Solana address format:", data.address);
+          return null;
+        }
       }
 
       const paymentData: NfcPaymentData = {
@@ -187,6 +265,10 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
         address: data.address,
         network: data.network,
         raw: text,
+        type: data.type === "zap-pay" ? "zap-pay" : "contract",
+        amount: data.amount ? String(data.amount) : undefined,
+        tokenAddress: data.tokenAddress ? String(data.tokenAddress) : undefined,
+        tokenSymbol: data.tokenSymbol ? String(data.tokenSymbol) : undefined,
       };
 
       console.log("[NFC] ===== PAYMENT DATA =====");
@@ -205,14 +287,70 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   /**
-   * Navigate to pay screen with payment data
+   * Navigate to pay screen with payment data.
+   * "zap-pay" tags route to the transfer screen (direct wallet payment),
+   * while "contract" tags route to the NFC scan screen (smart contract flow).
+   *
+   * If the account has auto-pay enabled and the amount is within the limit,
+   * the transaction is fired immediately without any screen navigation.
    */
-  const navigateToPayScreen = (payment: NfcPaymentData) => {
-    console.log("[NFC] Navigating to pay screen with payment data");
-    // Set the payment data first so the scan screen can access it
+  const navigateToPayScreen = async (payment: NfcPaymentData) => {
+    console.log("[NFC] Navigating to pay screen, type:", payment.type);
     setLastPayment(payment);
-    // Navigate to the NFC scan screen which handles the payment flow
-    router.push("/nfc/scan");
+
+    if (payment.type === "zap-pay" && payment.amount && selectedAccount) {
+      const autoPayLimit = selectedAccount.autoPayLimit;
+      const amountNum = parseFloat(payment.amount);
+      const limitNum = autoPayLimit ? parseFloat(autoPayLimit) : null;
+
+      if (limitNum !== null && !isNaN(amountNum) && !isNaN(limitNum) && amountNum <= limitNum) {
+        console.log("[NFC] Auto-pay firing instantly:", amountNum, "<=", limitNum);
+        const symbol = DEFAULT_NETWORKS[payment.chainId as ChainId]?.nativeCurrency.symbol ?? "ETH";
+        setAutoPayMeta({ amount: payment.amount, symbol });
+        setAutoPayOverlay("sending");
+        try {
+          const result = await TransactionService.sendNative(
+            selectedAccount.address,
+            payment.address,
+            payment.amount,
+            payment.chainId as ChainId,
+          );
+          if ("error" in result) {
+            console.error("[NFC] Auto-pay failed:", result.error);
+            setAutoPayOverlay("error");
+            setTimeout(() => setAutoPayOverlay("hidden"), 3000);
+          } else {
+            console.log("[NFC] Auto-pay success:", result.hash);
+            setAutoPayOverlay("success");
+            setTimeout(() => {
+              setAutoPayOverlay("hidden");
+              router.push("/(tabs)");
+            }, 2000);
+          }
+        } catch (err: any) {
+          console.error("[NFC] Auto-pay error:", err);
+          setAutoPayOverlay("error");
+          setTimeout(() => setAutoPayOverlay("hidden"), 3000);
+        }
+        return;
+      }
+    }
+
+    if (payment.type === "zap-pay") {
+      // No auto-pay — show transfer screen for manual confirmation
+      router.push({
+        pathname: "/send/transfer",
+        params: {
+          address: payment.address,
+          chainId: payment.chainId.toString(),
+          ...(payment.amount ? { amount: payment.amount } : {}),
+          ...(payment.tokenAddress ? { tokenAddress: payment.tokenAddress } : {}),
+        },
+      } as any);
+    } else {
+      // Smart contract terminal — scan screen handles the rest
+      router.push("/nfc/scan");
+    }
   };
 
   /**
@@ -371,6 +509,123 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
       }}
     >
       {children}
+
+      {/* Auto-pay full-screen overlay */}
+      <Modal visible={autoPayOverlay !== "hidden"} transparent animationType="none">
+        <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(300)} style={overlayStyles.backdrop}>
+
+          {autoPayOverlay === "sending" && (
+            <Animated.View entering={ZoomIn.duration(250)} style={overlayStyles.card}>
+              {/* Pulsing ring behind icon */}
+              <View style={overlayStyles.iconWrap}>
+                <Animated.View style={[overlayStyles.ring, { borderColor: accentColor }, ringStyle]} />
+                <View style={[overlayStyles.iconCircle, { borderColor: accentColor }]}>
+                  <Text style={overlayStyles.lightning}>⚡</Text>
+                </View>
+              </View>
+              <Text style={overlayStyles.title}>Paying</Text>
+              <Text style={overlayStyles.amount}>
+                {autoPayMeta?.amount} {autoPayMeta?.symbol}
+              </Text>
+              <Text style={overlayStyles.hint}>Auto-pay sending…</Text>
+            </Animated.View>
+          )}
+
+          {autoPayOverlay === "success" && (
+            <Animated.View entering={ZoomIn.duration(300)} style={overlayStyles.card}>
+              <View style={[overlayStyles.iconCircle, overlayStyles.iconSuccess]}>
+                <Text style={overlayStyles.lightning}>✓</Text>
+              </View>
+              <Text style={[overlayStyles.title, overlayStyles.titleSuccess]}>Sent!</Text>
+              <Text style={overlayStyles.amount}>
+                {autoPayMeta?.amount} {autoPayMeta?.symbol}
+              </Text>
+            </Animated.View>
+          )}
+
+          {autoPayOverlay === "error" && (
+            <Animated.View entering={ZoomIn.duration(300)} style={overlayStyles.card}>
+              <View style={[overlayStyles.iconCircle, overlayStyles.iconError]}>
+                <Text style={overlayStyles.lightning}>✕</Text>
+              </View>
+              <Text style={[overlayStyles.title, overlayStyles.titleError]}>Failed</Text>
+              <Text style={overlayStyles.hint}>Auto-pay could not complete</Text>
+            </Animated.View>
+          )}
+
+        </Animated.View>
+      </Modal>
     </NfcContext.Provider>
   );
 };
+
+const overlayStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.85)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  card: {
+    alignItems: "center",
+    gap: 16,
+    paddingHorizontal: 48,
+  },
+  iconWrap: {
+    width: 120,
+    height: 120,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ring: {
+    position: "absolute",
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 2,
+    borderColor: "#569F8C",
+  },
+  iconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#1E2E29",
+    borderWidth: 2,
+    borderColor: "#569F8C",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconSuccess: {
+    borderColor: "#10B981",
+    backgroundColor: "#10B98120",
+  },
+  iconError: {
+    borderColor: "#EF4444",
+    backgroundColor: "#EF444420",
+  },
+  lightning: {
+    fontSize: 36,
+    color: "#FFFFFF",
+  },
+  title: {
+    color: "#FFFFFF",
+    fontSize: 32,
+    fontWeight: "700",
+    letterSpacing: -0.5,
+  },
+  titleSuccess: {
+    color: "#10B981",
+  },
+  titleError: {
+    color: "#EF4444",
+  },
+  amount: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "600",
+  },
+  hint: {
+    color: "#9CA3AF",
+    fontSize: 15,
+  },
+});

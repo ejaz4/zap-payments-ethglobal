@@ -1,3 +1,4 @@
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { EthersClient } from "@/app/profiles/client";
 import { Button } from "@/components/ui";
 import { ZapContractService } from "@/services/zap-contract";
@@ -24,6 +25,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ZapContractSettingsScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
@@ -175,7 +178,7 @@ export default function ZapContractSettingsScreen() {
 
   if (!selectedAccount) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No wallet found</Text>
         </View>
@@ -184,7 +187,7 @@ export default function ZapContractSettingsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
@@ -195,7 +198,7 @@ export default function ZapContractSettingsScreen() {
 
       <KeyboardAvoidingView
         style={styles.content}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior="padding"
       >
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Network info */}
@@ -291,8 +294,8 @@ export default function ZapContractSettingsScreen() {
                 style={styles.deployNewButton}
                 onPress={handleDeployNew}
               >
-                <Ionicons name="add-circle-outline" size={20} color="#569F8C" />
-                <Text style={styles.deployNewText}>Deploy New Contract</Text>
+                <Ionicons name="add-circle-outline" size={20} color={accentColor} />
+                <Text style={[styles.deployNewText, { color: accentColor }]}>Deploy New Contract</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -305,7 +308,7 @@ export default function ZapContractSettingsScreen() {
                   <Ionicons
                     name="hardware-chip-outline"
                     size={48}
-                    color="#569F8C"
+                    color={accentColor}
                   />
                   <Text style={styles.setupTitle}>No Contract Found</Text>
                   <Text style={styles.setupDescription}>
@@ -340,6 +343,7 @@ export default function ZapContractSettingsScreen() {
                   <TouchableOpacity
                     style={[
                       styles.verifyButton,
+                      { backgroundColor: accentColor },
                       (!manualAddress.trim() || isVerifying) &&
                         styles.verifyButtonDisabled,
                     ]}

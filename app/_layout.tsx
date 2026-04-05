@@ -1,4 +1,4 @@
-import { DarkTheme, ThemeProvider } from "@react-navigation/native";
+import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
@@ -8,22 +8,16 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import "./shim";
 
 import { NfcProvider } from "@/app/nfc/context";
+import {
+    tintedBackground,
+    tintedSurface,
+    useAccentColor,
+} from "@/store/appearance";
+
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import { SecureStorage } from "@/services/storage";
 import { WalletService } from "@/services/wallet";
 import { useWalletStore } from "@/store/wallet";
-
-// Custom dark theme matching our design
-const customDarkTheme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    background: "#0F1512",
-    card: "#1E2E29",
-    text: "#FFFFFF",
-    border: "#374151",
-    primary: "#569F8C",
-  },
-};
 
 function useProtectedRoute() {
   const segments = useSegments();
@@ -48,12 +42,14 @@ function useProtectedRoute() {
 
 function RootLayoutNav() {
   useProtectedRoute();
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
 
   return (
     <Stack
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: "#0F1512" },
+        contentStyle: { backgroundColor: bg },
       }}
     >
       <Stack.Screen name="(tabs)" />
@@ -78,6 +74,24 @@ function RootLayoutNav() {
 export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);
   const setStatus = useWalletStore((s) => s.setStatus);
+  const accentColor = useAccentColor();
+  const colorScheme = useColorScheme() ?? "dark";
+  const bg = tintedBackground(accentColor);
+  const surface = tintedSurface(accentColor);
+
+  const baseTheme = colorScheme === "light" ? DefaultTheme : DarkTheme;
+
+  const theme = {
+    ...baseTheme,
+    colors: {
+      ...baseTheme.colors,
+      background: bg,
+      card: surface,
+      text: colorScheme === "light" ? "#11181C" : "#FFFFFF",
+      border: colorScheme === "light" ? "#D7E0DB" : "#374151",
+      primary: accentColor,
+    },
+  };
 
   useEffect(() => {
     async function init() {
@@ -103,8 +117,8 @@ export default function RootLayout() {
 
   if (!isReady) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#569F8C" />
+      <View style={[styles.loadingContainer, { backgroundColor: bg }]}>
+        <ActivityIndicator size="large" color={accentColor} />
       </View>
     );
   }
@@ -112,9 +126,9 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <NfcProvider>
-        <ThemeProvider value={customDarkTheme}>
+        <ThemeProvider value={theme}>
           <RootLayoutNav />
-          <StatusBar style="light" />
+          <StatusBar style={colorScheme === "light" ? "dark" : "light"} />
         </ThemeProvider>
       </NfcProvider>
     </SafeAreaProvider>

@@ -1,4 +1,6 @@
 import { EthersClient } from "@/app/profiles/client";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,6 +11,14 @@ import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ReceiveOptionsScreen() {
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const bg = tintedBackground(accentColor);
+  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
+  const textMuted = isLight ? "#64748B" : "#9CA3AF";
+  const cardBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const cardBorder = isLight ? "#DCE8E2" : "transparent";
   const router = useRouter();
   const selectedAccount = useSelectedAccount();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
@@ -47,41 +57,41 @@ export default function ReceiveOptionsScreen() {
 
   if (!selectedAccount) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
         <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No wallet found</Text>
+          <Text style={[styles.emptyText, { color: textMuted }]}>No wallet found</Text>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="close" size={24} color="#FFFFFF" />
+          <Ionicons name="close" size={24} color={textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Receive</Text>
+        <Text style={[styles.headerTitle, { color: textPrimary }]}>Receive</Text>
         <View style={{ width: 24 }} />
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.subtitle, { color: textMuted }]}> 
           Choose how you want to receive funds on{" "}
           {networkConfig?.name || "Ethereum"}
         </Text>
 
         {/* Option 1: Show Address */}
         <TouchableOpacity
-          style={styles.optionCard}
+          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
           onPress={() => router.push("/receive/show-address")}
         >
-          <View style={styles.optionIconContainer}>
-            <Ionicons name="qr-code-outline" size={32} color="#569F8C" />
+          <View style={[styles.optionIconContainer, { backgroundColor: accentColor + "20" }]}>
+            <Ionicons name="qr-code-outline" size={32} color={accentColor} />
           </View>
           <View style={styles.optionContent}>
-            <Text style={styles.optionTitle}>Show Address</Text>
-            <Text style={styles.optionDescription}>
+            <Text style={[styles.optionTitle, { color: textPrimary }]}>Show Address</Text>
+            <Text style={[styles.optionDescription, { color: textMuted }]}> 
               Display your wallet address and QR code for someone to send you
               funds directly
             </Text>
@@ -91,7 +101,7 @@ export default function ReceiveOptionsScreen() {
 
         {/* Option 2: Payment Request */}
         <TouchableOpacity
-          style={styles.optionCard}
+          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
           onPress={() => handleZapOptionPress("/receive/request")}
         >
           <View
@@ -104,14 +114,14 @@ export default function ReceiveOptionsScreen() {
           </View>
           <View style={styles.optionContent}>
             <View style={styles.optionTitleRow}>
-              <Text style={styles.optionTitle}>Payment Request</Text>
+              <Text style={[styles.optionTitle, { color: textPrimary }]}>Payment Request</Text>
               {!hasZapContract && (
                 <View style={styles.setupBadge}>
                   <Text style={styles.setupBadgeText}>Setup Required</Text>
                 </View>
               )}
             </View>
-            <Text style={styles.optionDescription}>
+            <Text style={[styles.optionDescription, { color: textMuted }]}> 
               Create a payment request with a specific amount, description, and
               itemized list
             </Text>
@@ -121,7 +131,7 @@ export default function ReceiveOptionsScreen() {
 
         {/* Option 3: Zap Terminal */}
         <TouchableOpacity
-          style={styles.optionCard}
+          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
           onPress={() => handleZapOptionPress("/receive/terminal")}
         >
           <View
@@ -134,16 +144,47 @@ export default function ReceiveOptionsScreen() {
           </View>
           <View style={styles.optionContent}>
             <View style={styles.optionTitleRow}>
-              <Text style={styles.optionTitle}>Zap Terminal</Text>
+              <Text style={[styles.optionTitle, { color: textPrimary }]}>Zap Terminal</Text>
               {!hasZapContract && (
                 <View style={styles.setupBadge}>
                   <Text style={styles.setupBadgeText}>Setup Required</Text>
                 </View>
               )}
             </View>
-            <Text style={styles.optionDescription}>
+            <Text style={[styles.optionDescription, { color: textMuted }]}> 
               Send payment request to an external Zap Terminal device for
               customer-facing display
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={24} color="#6B7280" />
+        </TouchableOpacity>
+
+        {/* Option 4: Zap Pay (HCE) */}
+        <TouchableOpacity
+          style={[styles.optionCard, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: cardBorder }]}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            router.push("/receive/zap-pay" as any);
+          }}
+        >
+          <View
+            style={[
+              styles.optionIconContainer,
+              { backgroundColor: "#10B98120" },
+            ]}
+          >
+            <Ionicons name="radio-outline" size={32} color="#10B981" />
+          </View>
+          <View style={styles.optionContent}>
+            <View style={styles.optionTitleRow}>
+              <Text style={[styles.optionTitle, { color: textPrimary }]}>Zap Pay</Text>
+              <View style={styles.newBadge}>
+                <Text style={styles.newBadgeText}>NFC</Text>
+              </View>
+            </View>
+            <Text style={[styles.optionDescription, { color: textMuted }]}> 
+              Broadcast your address via NFC — let someone tap their phone to
+              pay you instantly
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={24} color="#6B7280" />
@@ -157,11 +198,11 @@ export default function ReceiveOptionsScreen() {
             router.push("/settings/zap-contract" as any);
           }}
         >
-          <Ionicons name="settings-outline" size={18} color="#569F8C" />
-          <Text style={styles.setupLinkText}>
+          <Ionicons name="settings-outline" size={18} color={accentColor} />
+          <Text style={[styles.setupLinkText, { color: accentColor }]}>
             {hasZapContract ? "Manage Zap Contract" : "Set Up Zap Contract"}
           </Text>
-          <Ionicons name="chevron-forward" size={16} color="#569F8C" />
+          <Ionicons name="chevron-forward" size={16} color={accentColor} />
         </TouchableOpacity>
 
         {/* Info Box */}
@@ -169,9 +210,9 @@ export default function ReceiveOptionsScreen() {
           <Ionicons
             name="information-circle-outline"
             size={20}
-            color="#569F8C"
+            color={accentColor}
           />
-          <Text style={styles.infoText}>
+          <Text style={[styles.infoText, { color: accentColor }]}>
             Payment Request and Zap Terminal require a deployed smart contract.
             Go to Settings → Zap Contract to set one up.
           </Text>
@@ -254,6 +295,17 @@ const styles = StyleSheet.create({
   },
   setupBadgeText: {
     color: "#F59E0B",
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  newBadge: {
+    backgroundColor: "#10B98120",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  newBadgeText: {
+    color: "#10B981",
     fontSize: 10,
     fontWeight: "600",
   },

@@ -76,7 +76,7 @@ export const DEFAULT_NETWORKS: Record<ChainId, NetworkConfig> = {
   [ChainId.sepolia]: {
     chainId: ChainId.sepolia,
     name: "Sepolia",
-    rpcUrl: "https://rpc.sepolia.org",
+    rpcUrl: "https://ethereum-sepolia-rpc.publicnode.com",
     nativeCurrency: { name: "Sepolia Ether", symbol: "ETH", decimals: 18 },
     blockExplorerUrl: "https://sepolia.etherscan.io",
   },

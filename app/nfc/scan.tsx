@@ -4,11 +4,13 @@
  * Uses NfcProvider context for all NFC operations
  */
 
+import { useAccentColor, tintedBackground } from "@/store/appearance";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   StyleSheet,
@@ -29,10 +31,13 @@ import Animated, {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { NfcPaymentData, getChainName, useNfc } from "@/app/nfc/context";
-import { ChainId } from "@/app/profiles/client";
-import { useWalletStore } from "@/store/wallet";
+import { ChainId, DEFAULT_NETWORKS } from "@/app/profiles/client";
+import { TransactionService } from "@/services/wallet";
+import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 
 export default function NfcScanScreen() {
+  const accentColor = useAccentColor();
+  const bg = tintedBackground(accentColor);
   const router = useRouter();
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);
@@ -47,10 +52,18 @@ export default function NfcScanScreen() {
     clearLastPayment,
   } = useNfc();
 
+  const selectedAccount = useSelectedAccount();
+
   const [showChainMismatch, setShowChainMismatch] = useState(false);
-  const [mismatchPayment, setMismatchPayment] = useState<NfcPaymentData | null>(
-    null,
-  );
+  const [mismatchPayment, setMismatchPayment] = useState<NfcPaymentData | null>(null);
+
+  // Auto-pay inline state — shown instead of navigating away
+  type AutoPayStatus = "idle" | "sending" | "success" | "error";
+  const [autoPayStatus, setAutoPayStatus] = useState<AutoPayStatus>("idle");
+  const [autoPayError, setAutoPayError] = useState<string | null>(null);
+  const [autoPayAmount, setAutoPayAmount] = useState<string>("");
+  const [autoPayChainId, setAutoPayChainId] = useState<ChainId | null>(null);
+  const autoPayFiredRef = useRef(false);
 
   // Mark that we're on the pay screen when mounted
   useEffect(() => {
@@ -84,15 +97,73 @@ export default function NfcScanScreen() {
     }
   }, [lastPayment, selectedChainId]);
 
+  const fireAutoPay = async (payment: NfcPaymentData) => {
+    if (!selectedAccount || !payment.amount) return;
+    clearLastPayment();
+    setAutoPayAmount(payment.amount);
+    setAutoPayChainId(payment.chainId as ChainId);
+    setAutoPayStatus("sending");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    const result = await TransactionService.sendNative(
+      selectedAccount.address,
+      payment.address,
+      payment.amount,
+      payment.chainId as ChainId,
+    );
+
+    if ("error" in result) {
+      setAutoPayError(result.error);
+      setAutoPayStatus("error");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } else {
+      setAutoPayStatus("success");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setTimeout(() => {
+        router.replace("/(tabs)");
+      }, 2000);
+    }
+  };
+
   const navigateToPayment = (payment: NfcPaymentData) => {
     clearLastPayment();
-    router.push({
-      pathname: "/nfc/payment",
-      params: {
-        address: payment.address,
-        chainId: payment.chainId.toString(),
-      },
-    });
+    const autoPayLimit = selectedAccount?.autoPayLimit;
+
+    if (payment.type === "zap-pay") {
+      const amountNum = payment.amount ? parseFloat(payment.amount) : null;
+      const limitNum = autoPayLimit ? parseFloat(autoPayLimit) : null;
+      const shouldAutoPay =
+        amountNum !== null &&
+        limitNum !== null &&
+        !isNaN(amountNum) &&
+        !isNaN(limitNum) &&
+        amountNum <= limitNum;
+
+      if (shouldAutoPay) {
+        fireAutoPay(payment);
+        return;
+      }
+
+      router.push({
+        pathname: "/send/transfer",
+        params: {
+          address: payment.address,
+          chainId: payment.chainId.toString(),
+          ...(payment.amount ? { amount: payment.amount } : {}),
+        },
+      } as any);
+    } else {
+      // Smart contract terminal — amount lives in the contract.
+      // Pass autopay params so payment.tsx can fire immediately once loaded.
+      router.push({
+        pathname: "/nfc/payment",
+        params: {
+          address: payment.address,
+          chainId: payment.chainId.toString(),
+          ...(autoPayLimit ? { autopay: "true", autopayLimit: autoPayLimit } : {}),
+        },
+      });
+    }
   };
 
   const handleSwitchChain = () => {
@@ -177,8 +248,57 @@ export default function NfcScanScreen() {
     }
   };
 
+  // Auto-pay inline screens
+  if (autoPayStatus === "sending") {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
+        <View style={styles.autoPayContainer}>
+          <ActivityIndicator size="large" color={accentColor} />
+          <Text style={styles.autoPayTitle}>Sending Payment...</Text>
+          <Text style={styles.autoPayAmount}>
+            {autoPayAmount} {autoPayChainId ? (DEFAULT_NETWORKS[autoPayChainId]?.nativeCurrency.symbol ?? "") : ""}
+          </Text>
+          <Text style={styles.autoPayHint}>Auto-pay is sending your transaction</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (autoPayStatus === "success") {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
+        <View style={styles.autoPayContainer}>
+          <Ionicons name="checkmark-circle" size={96} color="#10B981" />
+          <Text style={[styles.autoPayTitle, { color: "#10B981" }]}>Payment Sent!</Text>
+          <Text style={styles.autoPayAmount}>
+            {autoPayAmount} {autoPayChainId ? (DEFAULT_NETWORKS[autoPayChainId]?.nativeCurrency.symbol ?? "") : ""}
+          </Text>
+          <Text style={styles.autoPayHint}>Returning to wallet...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (autoPayStatus === "error") {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
+        <View style={styles.autoPayContainer}>
+          <Ionicons name="close-circle" size={96} color="#EF4444" />
+          <Text style={[styles.autoPayTitle, { color: "#EF4444" }]}>Payment Failed</Text>
+          <Text style={styles.autoPayHint}>{autoPayError || "Transaction could not be sent"}</Text>
+          <TouchableOpacity
+            style={styles.autoPayRetryButton}
+            onPress={() => { setAutoPayStatus("idle"); setAutoPayError(null); autoPayFiredRef.current = false; }}
+          >
+            <Text style={styles.autoPayRetryText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
@@ -236,7 +356,7 @@ export default function NfcScanScreen() {
           <Text style={styles.statusText}>{getStatusMessage()}</Text>
 
           {!isEnabled && isSupported && (
-            <TouchableOpacity style={styles.enableButton} onPress={handleRetry}>
+            <TouchableOpacity style={[styles.enableButton, { backgroundColor: accentColor }]} onPress={handleRetry}>
               <Text style={styles.enableButtonText}>Check NFC Settings</Text>
             </TouchableOpacity>
           )}
@@ -253,20 +373,20 @@ export default function NfcScanScreen() {
       {/* Bottom Instructions */}
       <View style={styles.instructions}>
         <View style={styles.instructionRow}>
-          <View style={styles.instructionIcon}>
-            <Ionicons name="phone-portrait-outline" size={24} color="#569F8C" />
+          <View style={[styles.instructionIcon, { backgroundColor: accentColor + "20" }]}>
+            <Ionicons name="phone-portrait-outline" size={24} color={accentColor} />
           </View>
           <Text style={styles.instructionText}>
-            Hold the back of your phone near the NFC terminal
+            Hold near an NFC terminal or another phone using Zap Pay
           </Text>
         </View>
 
         <View style={styles.instructionRow}>
-          <View style={styles.instructionIcon}>
-            <Ionicons name="hand-left-outline" size={24} color="#569F8C" />
+          <View style={[styles.instructionIcon, { backgroundColor: accentColor + "20" }]}>
+            <Ionicons name="hand-left-outline" size={24} color={accentColor} />
           </View>
           <Text style={styles.instructionText}>
-            Keep steady until the terminal is detected
+            Keep steady until the device is detected
           </Text>
         </View>
       </View>
@@ -293,11 +413,11 @@ export default function NfcScanScreen() {
 
             <Text style={styles.modalMessage}>
               This terminal requires{" "}
-              <Text style={styles.modalHighlight}>
+              <Text style={[styles.modalHighlight, { color: accentColor }]}>
                 {mismatchPayment ? getChainName(mismatchPayment.chainId) : ""}
               </Text>
               , but you're currently on{" "}
-              <Text style={styles.modalHighlight}>
+              <Text style={[styles.modalHighlight, { color: accentColor }]}>
                 {getChainName(selectedChainId)}
               </Text>
               .
@@ -316,7 +436,7 @@ export default function NfcScanScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.modalButtonPrimary}
+                style={[styles.modalButtonPrimary, { backgroundColor: accentColor }]}
                 onPress={handleSwitchChain}
               >
                 <Text style={styles.modalButtonPrimaryText}>
@@ -554,6 +674,43 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   modalButtonPrimaryText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  autoPayContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+    gap: 16,
+  },
+  autoPayTitle: {
+    color: "#FFFFFF",
+    fontSize: 28,
+    fontWeight: "700",
+    marginTop: 16,
+    textAlign: "center",
+  },
+  autoPayAmount: {
+    color: "#D1D5DB",
+    fontSize: 20,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  autoPayHint: {
+    color: "#9CA3AF",
+    fontSize: 15,
+    textAlign: "center",
+  },
+  autoPayRetryButton: {
+    marginTop: 16,
+    backgroundColor: "#374151",
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  autoPayRetryText: {
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "600",

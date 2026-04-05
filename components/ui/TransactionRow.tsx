@@ -1,7 +1,15 @@
+import { ChainId } from "@/app/profiles/client";
+import { useENSName } from "@/hooks/use-ens";
 import { Transaction } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 
 interface TransactionRowProps {
   transaction: Transaction;
@@ -14,16 +22,24 @@ export function TransactionRow({
   currentAddress,
   onPress,
 }: TransactionRowProps) {
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
   const isSent =
     transaction.from.toLowerCase() === currentAddress.toLowerCase();
   const isReceived =
     transaction.to.toLowerCase() === currentAddress.toLowerCase();
 
+  const counterpartAddress = isSent ? transaction.to : transaction.from;
+  const ensName = useENSName(counterpartAddress, transaction.chainId as ChainId);
+
   const getIcon = () => {
     if (transaction.status === "pending") return "time-outline";
     if (transaction.status === "failed") return "close-circle-outline";
 
-    // Tap-to-pay transactions get a special icon
     if (transaction.paymentMethod === "tap-to-pay") {
       return isReceived ? "receipt-outline" : "phone-portrait-outline";
     }
@@ -45,7 +61,6 @@ export function TransactionRow({
     if (transaction.type === "approve") return "Approve";
     if (transaction.type === "swap") return "Swap";
 
-    // Check for payment request (received via Zap Pay)
     if (transaction.paymentMethod === "tap-to-pay") {
       if (isReceived) return "Payment Received";
       if (isSent) return "Zap Pay";
@@ -57,7 +72,6 @@ export function TransactionRow({
   };
 
   const getSubtitle = () => {
-    // Show merchant name for tap-to-pay transactions
     if (
       transaction.paymentMethod === "tap-to-pay" &&
       transaction.merchantName
@@ -65,9 +79,8 @@ export function TransactionRow({
       return transaction.merchantName;
     }
 
-    return isSent
-      ? `To ${formatAddress(transaction.to)}`
-      : `From ${formatAddress(transaction.from)}`;
+    const label = ensName ?? formatAddress(counterpartAddress);
+    return isSent ? `To ${label}` : `From ${label}`;
   };
 
   const formatAddress = (address: string) => {
@@ -99,10 +112,8 @@ export function TransactionRow({
     return date.toLocaleDateString();
   };
 
-  const Container = onPress ? TouchableOpacity : View;
-
-  return (
-    <Container style={styles.container} onPress={onPress} activeOpacity={0.7}>
+  const content = (
+    <>
       <View
         style={[
           styles.iconContainer,
@@ -129,7 +140,30 @@ export function TransactionRow({
         </Text>
         <Text style={styles.time}>{formatTime(transaction.timestamp)}</Text>
       </View>
-    </Container>
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.container}>{content}</View>;
+  }
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <TouchableOpacity
+        style={styles.container}
+        onPress={onPress}
+        activeOpacity={1}
+        onPressIn={() => {
+          scale.value = withSpring(0.97, { damping: 20, stiffness: 400 });
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }}
+        onPressOut={() => {
+          scale.value = withSpring(1, { damping: 20, stiffness: 400 });
+        }}
+      >
+        {content}
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 

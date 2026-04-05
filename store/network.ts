@@ -92,6 +92,7 @@ const DEFAULT_ENABLED: number[] = [
   ChainId.arbitrum,
   ChainId.optimism,
   ChainId.base,
+  ChainId.sepolia,
 ];
 
 // Default favorites

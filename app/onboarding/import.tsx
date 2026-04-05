@@ -1,21 +1,33 @@
 import { Button, Input } from "@/components/ui";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import { WalletService } from "@/services/wallet";
+import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type ImportType = "mnemonic" | "privateKey";
 
 export default function ImportWalletScreen() {
+  const accentColor = useAccentColor();
+  const scheme = useColorScheme() ?? "dark";
+  const isLight = scheme === "light";
+  const bg = tintedBackground(accentColor);
+  const textPrimary = isLight ? "#11181C" : "#FFFFFF";
+  const textMuted = isLight ? "#64748B" : "#9CA3AF";
+  const tabBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const activeTabBg = isLight ? "#EAF2EE" : "#374151";
+  const warningBg = isLight ? "#FFFFFF" : "#1E2E29";
+  const warningText = isLight ? "#334155" : "#D1D5DB";
   const router = useRouter();
   const accounts = useWalletStore((s) => s.accounts);
   const setIsAddingAccount = useWalletStore((s) => s.setIsAddingAccount);
@@ -76,33 +88,34 @@ export default function ImportWalletScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+          <Ionicons name="arrow-back" size={24} color={textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
+        <Text style={[styles.headerTitle, { color: textPrimary }]}> 
           {isAddingAccount ? "Import Account" : "Import Wallet"}
         </Text>
         <View style={{ width: 24 }} />
       </View>
 
       <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>
+        <Text style={[styles.title, { color: textPrimary }]}> 
           {isAddingAccount ? "Import Account" : "Import Existing Wallet"}
         </Text>
-        <Text style={styles.description}>
+        <Text style={[styles.description, { color: textMuted }]}> 
           {isAddingAccount
             ? "Enter a private key to import an existing account to your wallet."
             : "Enter your recovery phrase or private key to import your wallet."}
         </Text>
 
         {!isAddingAccount && (
-          <View style={styles.tabs}>
+          <View style={[styles.tabs, { backgroundColor: tabBg }]}> 
             <TouchableOpacity
               style={[
                 styles.tab,
                 importType === "mnemonic" && styles.activeTab,
+                importType === "mnemonic" && { backgroundColor: activeTabBg },
               ]}
               onPress={() => {
                 setImportType("mnemonic");
@@ -114,6 +127,7 @@ export default function ImportWalletScreen() {
                 style={[
                   styles.tabText,
                   importType === "mnemonic" && styles.activeTabText,
+                  { color: importType === "mnemonic" ? textPrimary : textMuted },
                 ]}
               >
                 Recovery Phrase
@@ -123,6 +137,7 @@ export default function ImportWalletScreen() {
               style={[
                 styles.tab,
                 importType === "privateKey" && styles.activeTab,
+                importType === "privateKey" && { backgroundColor: activeTabBg },
               ]}
               onPress={() => {
                 setImportType("privateKey");
@@ -134,6 +149,7 @@ export default function ImportWalletScreen() {
                 style={[
                   styles.tabText,
                   importType === "privateKey" && styles.activeTabText,
+                  { color: importType === "privateKey" ? textPrimary : textMuted },
                 ]}
               >
                 Private Key
@@ -168,9 +184,18 @@ export default function ImportWalletScreen() {
           />
         )}
 
-        <View style={styles.warningBox}>
-          <Ionicons name="lock-closed-outline" size={24} color="#569F8C" />
-          <Text style={styles.warningText}>
+        <View
+          style={[
+            styles.warningBox,
+            {
+              backgroundColor: warningBg,
+              borderWidth: isLight ? 1 : 0,
+              borderColor: isLight ? "#DCE8E2" : "transparent",
+            },
+          ]}
+        >
+          <Ionicons name="lock-closed-outline" size={24} color={accentColor} />
+          <Text style={[styles.warningText, { color: warningText }]}> 
             {isAddingAccount
               ? "Your private key is encrypted and stored securely on your device. It is never sent to any server."
               : "Your recovery phrase and private key are encrypted and stored securely on your device. They are never sent to any server."}

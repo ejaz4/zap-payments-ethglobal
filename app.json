@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "zap-payments-cannes",
+    "slug": "zap-payments-cannes",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.myapp",
+      "package": "com.ejaz4.cannes",
       "permissions": ["android.permission.NFC"]
     },
     "web": {
@@ -33,6 +33,14 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "./plugins/withReactNativeHce",
+        {
+          "appIds": [
+            "D2760000850101"
+          ]
+        }
+      ],
       [
         "expo-splash-screen",
         {
