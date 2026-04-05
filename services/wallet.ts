@@ -1,11 +1,15 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
 import { ApiProvider } from "@/crypto/provider/api";
+import { dynamicClient } from "@/crypto/dynamic/client";
+import { DynamicProvider } from "@/crypto/provider/dynamic";
 import { useTokenStore } from "@/store/tokens";
 import { useProviderStore } from "@/store/provider";
 import {
+  DYNAMIC_NETWORK_IDS,
   SOLANA_NETWORK_IDS,
   TokenBalance,
   Transaction,
+  getDynamicChainKey,
   getSolanaChainKey,
   useWalletStore,
 } from "@/store/wallet";
@@ -495,6 +499,112 @@ export class WalletService {
   }
 
   /**
+   * Create a Dynamic embedded wallet account via the Dynamic SDK.
+   *
+   * Unlike createSolanaAccount (which uses the API backend), this method
+   * uses the Dynamic React Native SDK's built-in embedded wallet. The user
+   * must complete the Dynamic auth flow first (via the WebView), after which
+   * the SDK automatically provisions an SVM embedded wallet.
+   *
+   * This method reads the wallet from the Dynamic client state and registers
+   * it in our local wallet store.
+   */
+  /**
+   * @param name          - Display name for the account.
+   * @param forceNewLogin - If true, logs out of Dynamic first so the user can
+   *                        sign in with a different identity to get a new wallet.
+   */
+  static async createDynamicAccount(
+    name?: string,
+    forceNewLogin?: boolean,
+  ): Promise<string | null> {
+    const store = useWalletStore.getState();
+
+    try {
+      store.setLoading(true);
+      store.setError(null);
+
+      // If caller wants a fresh login (e.g. adding a second Dynamic wallet
+      // with a different email), log out first.
+      if (forceNewLogin && dynamicClient.auth.authenticatedUser) {
+        await dynamicClient.auth.logout();
+      }
+
+      // Ensure the user is authenticated
+      if (!dynamicClient.auth.authenticatedUser) {
+        throw new Error(
+          "Not authenticated with Dynamic. Complete the Dynamic sign-in flow first.",
+        );
+      }
+
+      // Look for an existing SVM wallet first
+      let svmWallet = dynamicClient.wallets.userWallets.find(
+        (w: any) => w.chain === "SOL" || w.chain === "SVM",
+      );
+
+      // If no SVM wallet exists, explicitly create one.
+      // Dynamic creates an EVM wallet by default on auth — we need to request
+      // a Solana wallet separately via the embedded wallet API.
+      if (!svmWallet) {
+        console.log("[WalletService] No SVM wallet found, creating one via Dynamic SDK...");
+        await dynamicClient.wallets.embedded.createWallet({ chain: "Sol" });
+        // Re-read wallets after creation
+        svmWallet = dynamicClient.wallets.userWallets.find(
+          (w: any) => w.chain === "SOL" || w.chain === "SVM",
+        );
+      }
+
+      if (!svmWallet) {
+        throw new Error(
+          "Failed to create Dynamic SVM wallet. Make sure Solana is enabled " +
+            "in your Dynamic dashboard under Chains & Networks.",
+        );
+      }
+
+      const address = svmWallet.address;
+
+      // If this wallet is already in our local store (e.g. from a previous
+      // partial attempt), just return it instead of throwing.
+      const existing = store.accounts.find((a) => a.address === address);
+      if (existing) {
+        console.log("[WalletService] Dynamic SVM wallet already in store, reusing:", address);
+        // Switch to the existing account
+        const idx = store.accounts.indexOf(existing);
+        if (idx >= 0) store.setSelectedAccountIndex(idx);
+        useProviderStore.getState().setProviderType("dynamic");
+        return address;
+      }
+
+      const dynamicCount = store.accounts.filter(
+        (a) => a.accountType === "dynamic",
+      ).length;
+
+      store.addAccount({
+        address,
+        name: name ?? `Dynamic ${dynamicCount + 1}`,
+        index: store.accounts.length,
+        isImported: true,
+        accountType: "dynamic",
+        dynamicWalletId: (svmWallet as any).id,
+        networkId: "sol-mainnet",
+      });
+
+      // Switch provider mode to dynamic
+      useProviderStore.getState().setProviderType("dynamic");
+
+      return address;
+    } catch (error) {
+      console.error("[WalletService]: Failed to create Dynamic account", error);
+      store.setError(
+        error instanceof Error ? error.message : "Failed to create Dynamic account",
+      );
+      return null;
+    } finally {
+      store.setLoading(false);
+    }
+  }
+
+  /**
    * Export the locally-stored private key for a non-Dynamic wallet.
    * Returns null if the account is Dynamic-managed (no local key) or the key isn't found.
    */
@@ -503,6 +613,11 @@ export class WalletService {
     const account = store.accounts.find(
       (a) => a.address.toLowerCase() === address.toLowerCase(),
     );
+
+    // Dynamic wallets are MPC-secured — no local private key
+    if (account?.accountType === "dynamic") {
+      return null;
+    }
 
     // Solana wallets are Dynamic-managed — local private key may not exist
     if (account?.accountType === "solana") {
@@ -675,7 +790,9 @@ export class BalanceService {
       this.isRefreshing = true;
       this.lastRefreshTime = now;
 
-      if (account.accountType === "solana") {
+      if (account.accountType === "dynamic") {
+        await this.refreshDynamicBalances(account.address);
+      } else if (account.accountType === "solana") {
         await this.refreshSolanaBalances(account.address);
       } else {
         await this.refreshEvmBalances(account.address, store.selectedChainId);
@@ -759,6 +876,42 @@ export class BalanceService {
             chainId: chainKey,
           }));
           store.setTokenBalances(address, chainKey, solTokens);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Refresh Dynamic SVM native + token balances via the DynamicProvider.
+   * Uses the Solana Connection from the Dynamic SDK.
+   */
+  private static async refreshDynamicBalances(address: string): Promise<void> {
+    const store = useWalletStore.getState();
+    const provider = new DynamicProvider();
+
+    await Promise.allSettled(
+      DYNAMIC_NETWORK_IDS.map(async (networkId) => {
+        const chainKey = getDynamicChainKey(networkId);
+        const [nativeResult, tokenResult] = await Promise.allSettled([
+          provider.getNativeBalance(address, networkId),
+          provider.getTokenBalances(address, networkId),
+        ]);
+
+        if (nativeResult.status === "fulfilled") {
+          store.setNativeBalance(address, chainKey, nativeResult.value.amount);
+        }
+
+        if (tokenResult.status === "fulfilled") {
+          const dynTokens: TokenBalance[] = tokenResult.value.map((b) => ({
+            address: b.assetId.replace(`token:${networkId}:`, ""),
+            symbol: b.symbol || "SPL",
+            name: b.symbol || "SPL Token",
+            decimals: b.decimals,
+            balance: b.amountAtomic,
+            balanceFormatted: b.amount,
+            chainId: chainKey,
+          }));
+          store.setTokenBalances(address, chainKey, dynTokens);
         }
       }),
     );

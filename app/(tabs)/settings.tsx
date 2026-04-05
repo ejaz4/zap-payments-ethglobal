@@ -2,6 +2,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { WalletService } from "@/services/wallet";
 import { hexToRgba, tintedBackground, useAccentColor } from "@/store/appearance";
 import { getCurrencyInfo, useSelectedCurrency } from "@/store/currency";
+import { useDemoStore } from "@/store/demo";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -10,6 +11,7 @@ import {
     Alert,
     ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TouchableOpacity,
     View,
@@ -21,6 +23,8 @@ export default function SettingsScreen() {
   const selectedAccount = useSelectedAccount();
   const hasBackedUp = useWalletStore((s) => s.hasBackedUp);
   const accentColor = useAccentColor();
+  const demoMode = useDemoStore((s) => s.demoMode);
+  const toggleDemoMode = useDemoStore((s) => s.toggleDemoMode);
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
   const bg = tintedBackground("#000000");
@@ -312,6 +316,29 @@ export default function SettingsScreen() {
                 <Text style={[styles.rowSubtitle, { color: textSecondary }]}>1.0.0</Text>
               </View>
             </View>
+          </View>
+        </View>
+
+        {/* Demo Mode */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: sectionLabel }]}>Demo</Text>
+
+          <View style={[styles.row, rowAccentStyle]}>
+            <View style={styles.rowLeft}>
+              <Ionicons name="flash-outline" size={24} color={rowIcon} />
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: textPrimary }]}>Demo Mode</Text>
+                <Text style={[styles.rowSubtitle, { color: textSecondary }]}>
+                  Auto-confirm sends and auto-swap on receive
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={demoMode}
+              onValueChange={toggleDemoMode}
+              trackColor={{ false: "#374151", true: accentColor }}
+              thumbColor="#FFFFFF"
+            />
           </View>
         </View>
 

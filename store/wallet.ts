@@ -26,8 +26,8 @@ export interface Account {
   name: string;
   index: number;
   isImported: boolean;
-  /** "evm" (default) or "solana". Determines which provider and signing path is used. */
-  accountType?: "evm" | "solana";
+  /** "evm" (default), "solana" (API-based), or "dynamic" (Dynamic SDK embedded wallet). */
+  accountType?: "evm" | "solana" | "dynamic";
   /** Dynamic wallet ID returned by the API on wallet creation/import. Required for signing in strict Dynamic custody mode. */
   dynamicWalletId?: string;
   /** The API network this wallet was created on (e.g. "dynamic-mainnet", "dynamic-testnet"). */
@@ -78,6 +78,12 @@ export interface Transaction {
   blockHash?: string;
   data?: string;
   confirmedAt?: number;
+
+  // Swap metadata
+  swapFromSymbol?: string;
+  swapFromAmount?: string;
+  swapToSymbol?: string;
+  swapToAmount?: string;
 
   // Payment method metadata
   paymentMethod?: "tap-to-pay" | "manual-transfer";
@@ -398,15 +404,36 @@ export function getSolanaChainKey(networkId: string): ChainId {
   return SOLANA_CHAIN_KEYS[networkId] ?? (999001 as ChainId);
 }
 
+/**
+ * Stable placeholder ChainId values for Dynamic SDK SVM networks.
+ * Kept separate from the API-based Solana keys above.
+ */
+export const DYNAMIC_CHAIN_KEYS: Record<string, ChainId> = {
+  "sol-mainnet": 998001 as ChainId,
+  "sol-devnet": 998002 as ChainId,
+};
+
+/** All Dynamic SVM networkIds in display order */
+export const DYNAMIC_NETWORK_IDS = ["sol-mainnet", "sol-devnet"] as const;
+
+/** Get the storage ChainId for a Dynamic networkId */
+export function getDynamicChainKey(networkId: string): ChainId {
+  return DYNAMIC_CHAIN_KEYS[networkId] ?? (998001 as ChainId);
+}
+
 export const useNativeBalance = (address?: string, chainId?: ChainId) => {
   const balances = useWalletStore((s) => s.nativeBalances);
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const selectedAccount = useSelectedAccount();
   const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
+  const selectedDynamicNetworkId = useProviderStore((s) => s.selectedDynamicNetworkId);
 
   const addr = address || selectedAccount?.address;
+  const isDynamic = selectedAccount?.accountType === "dynamic";
   const isSolana = selectedAccount?.accountType === "solana";
-  const chain = isSolana
+  const chain = isDynamic
+    ? getDynamicChainKey(selectedDynamicNetworkId ?? "sol-mainnet")
+    : isSolana
     ? getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet")
     : (chainId || selectedChainId);
 
@@ -419,10 +446,14 @@ export const useTokenBalances = (address?: string, chainId?: ChainId) => {
   const selectedChainId = useWalletStore((s) => s.selectedChainId);
   const selectedAccount = useSelectedAccount();
   const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
+  const selectedDynamicNetworkId = useProviderStore((s) => s.selectedDynamicNetworkId);
 
   const addr = address || selectedAccount?.address;
+  const isDynamic = selectedAccount?.accountType === "dynamic";
   const isSolana = selectedAccount?.accountType === "solana";
-  const chain = isSolana
+  const chain = isDynamic
+    ? getDynamicChainKey(selectedDynamicNetworkId ?? "sol-mainnet")
+    : isSolana
     ? getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet")
     : (chainId || selectedChainId);
 

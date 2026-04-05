@@ -130,6 +130,14 @@ export default function SendOptionsScreen() {
               iconColor="#10B981"
               delay={200}
             />
+
+            <SendOption
+              icon="shuffle-outline"
+              title="Send Anything"
+              onPress={() => router.push("/send/send-anything" as any)}
+              iconColor="#FF007A"
+              delay={300}
+            />
           </View>
         </View>
       </MotiView>

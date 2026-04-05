@@ -1,18 +1,18 @@
 import { ChainId, EthersClient } from "@/app/profiles/client";
 import {
-    AddressInput,
-    ApprovalModal,
-    Button,
-    ChainBadgeMini
+  AddressInput,
+  ApprovalModal,
+  Button,
+  ChainBadgeMini
 } from "@/components/ui";
 import {
-    NetworkSelector,
-    SOLANA_NETWORKS,
+  NetworkSelector,
+  SOLANA_NETWORKS,
 } from "@/components/ui/NetworkSelector";
 import { TokenInfo } from "@/config/tokens";
 import {
-    NATIVE_TOKEN_ADDRESS,
-    isUniswapSupported,
+  NATIVE_TOKEN_ADDRESS,
+  isUniswapSupported,
 } from "@/config/uniswap";
 import { ApiProvider } from "@/crypto/provider/api";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -25,33 +25,36 @@ import { SecureStorage } from "@/services/storage";
 import { BalanceService, TransactionService } from "@/services/wallet";
 import { tintedBackground, tintedSurface, useAccentColor } from "@/store/appearance";
 import { useContactByAddress, useContactsStore } from "@/store/contacts";
+import { useDemoMode } from "@/store/demo";
 import { useProviderStore } from "@/store/provider";
 import { useTokenStore } from "@/store/tokens";
 import {
-    SOLANA_CHAIN_KEYS, TokenBalance,
-    getSolanaChainKey,
-    useNativeBalance,
-    useSelectedAccount,
-    useTokenBalances,
-    useWalletStore
+  SOLANA_CHAIN_KEYS, TokenBalance,
+  getDynamicChainKey,
+  getSolanaChainKey,
+  useNativeBalance,
+  useSelectedAccount,
+  useTokenBalances,
+  useWalletStore
 } from "@/store/wallet";
+import { DynamicProvider } from "@/crypto/provider/dynamic";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -62,11 +65,12 @@ type SelectedAsset =
 
 export default function SendScreen() {
   const accentColor = useAccentColor();
+  const demoMode = useDemoMode();
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
   const bg = tintedBackground("#000000");
   const headerBg = tintedSurface(accentColor, 0.08, isLight ? "#FFFFFF" : "#111111", scheme);
-  const panelBg = tintedSurface(accentColor, 0.11, isLight ? "#FFFFFF" : "#111111", scheme);
+  const panelBg = tintedSurface("#000000", 0.11, isLight ? "#FFFFFF" : "#111111", scheme);
   const panelBorder = isLight ? "#D6E4DE" : "#24312C";
   const panelText = isLight ? "#0F172A" : "#FFFFFF";
   const panelMuted = isLight ? "#64748B" : "#9CA3AF";
@@ -86,47 +90,77 @@ export default function SendScreen() {
     amount?: string;
   }>();
   const selectedAccount = useSelectedAccount();
-  const isSolanaAccount = selectedAccount?.accountType === "solana";
+  const isSolanaAccount = selectedAccount?.accountType === "solana" || selectedAccount?.accountType === "dynamic";
+  const isDynamicAccount = selectedAccount?.accountType === "dynamic";
   const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
-  const solanaNetworkName = SOLANA_NETWORKS.find((n) => n.networkId === (selectedApiNetworkId ?? "dynamic-mainnet"))?.displayName ?? "Solana";
+  const solanaNetworkName = isDynamicAccount
+    ? "Solana Devnet"
+    : (SOLANA_NETWORKS.find((n) => n.networkId === (selectedApiNetworkId ?? "dynamic-mainnet"))?.displayName ?? "Solana");
   const storeChainId = useWalletStore((s) => s.selectedChainId);
   const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);
   const nativeBalance = useNativeBalance();
   const tokenBalances = useTokenBalances();
   const getTokensForChain = useTokenStore((s) => s.getTokensForChain);
 
-  // For Solana: re-fetch native + token balances whenever the selected network changes
+  // For SVM accounts: re-fetch native + token balances whenever the selected network changes
   useEffect(() => {
     if (!isSolanaAccount || !selectedAccount) return;
-    const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
-    if (!apiBaseUrl) return;
     const walletStore = useWalletStore.getState();
-    const provider = new ApiProvider(apiBaseUrl);
-    const networkId = selectedApiNetworkId ?? "dynamic-mainnet";
-    const chainKey = getSolanaChainKey(networkId);
 
-    // Fetch native and token balances in parallel
-    Promise.allSettled([
-      provider.getNativeBalance(selectedAccount.address, networkId),
-      provider.getTokenBalances(selectedAccount.address, networkId),
-    ]).then(([nativeResult, tokenResult]) => {
-      if (nativeResult.status === "fulfilled") {
-        walletStore.setNativeBalance(selectedAccount.address, chainKey, nativeResult.value.amount);
-      }
-      if (tokenResult.status === "fulfilled") {
-        const solTokens = tokenResult.value.map((b) => ({
-          address: b.assetId.replace(`token:${networkId}:`, ""),
-          symbol: b.symbol,
-          name: b.symbol,
-          decimals: b.decimals,
-          balance: b.amountAtomic,
-          balanceFormatted: b.amount,
-          chainId: chainKey,
-        }));
-        walletStore.setTokenBalances(selectedAccount.address, chainKey, solTokens);
-      }
-    });
-  }, [isSolanaAccount, selectedAccount?.address, selectedApiNetworkId]);
+    if (isDynamicAccount) {
+      // Dynamic SDK — use DynamicProvider with sol-devnet
+      const dynProvider = new DynamicProvider();
+      const networkId = "sol-devnet";
+      const chainKey = getDynamicChainKey(networkId);
+      Promise.allSettled([
+        dynProvider.getNativeBalance(selectedAccount.address, networkId),
+        dynProvider.getTokenBalances(selectedAccount.address, networkId),
+      ]).then(([nativeResult, tokenResult]) => {
+        if (nativeResult.status === "fulfilled") {
+          walletStore.setNativeBalance(selectedAccount.address, chainKey, nativeResult.value.amount);
+        }
+        if (tokenResult.status === "fulfilled") {
+          const dynTokens = tokenResult.value.map((b) => ({
+            address: b.assetId.replace(`token:${networkId}:`, ""),
+            symbol: b.symbol || "SPL",
+            name: b.symbol || "SPL Token",
+            decimals: b.decimals,
+            balance: b.amountAtomic,
+            balanceFormatted: b.amount,
+            chainId: chainKey,
+          }));
+          walletStore.setTokenBalances(selectedAccount.address, chainKey, dynTokens);
+        }
+      });
+    } else {
+      // API-based Solana
+      const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+      if (!apiBaseUrl) return;
+      const provider = new ApiProvider(apiBaseUrl);
+      const networkId = selectedApiNetworkId ?? "dynamic-mainnet";
+      const chainKey = getSolanaChainKey(networkId);
+      Promise.allSettled([
+        provider.getNativeBalance(selectedAccount.address, networkId),
+        provider.getTokenBalances(selectedAccount.address, networkId),
+      ]).then(([nativeResult, tokenResult]) => {
+        if (nativeResult.status === "fulfilled") {
+          walletStore.setNativeBalance(selectedAccount.address, chainKey, nativeResult.value.amount);
+        }
+        if (tokenResult.status === "fulfilled") {
+          const solTokens = tokenResult.value.map((b) => ({
+            address: b.assetId.replace(`token:${networkId}:`, ""),
+            symbol: b.symbol,
+            name: b.symbol,
+            decimals: b.decimals,
+            balance: b.amountAtomic,
+            balanceFormatted: b.amount,
+            chainId: chainKey,
+          }));
+          walletStore.setTokenBalances(selectedAccount.address, chainKey, solTokens);
+        }
+      });
+    }
+  }, [isSolanaAccount, isDynamicAccount, selectedAccount?.address, selectedApiNetworkId]);
 
   // Use chainId from params if provided, otherwise fall back to store's selectedChainId
   const solanaChainIds = Object.values(SOLANA_CHAIN_KEYS) as number[];
@@ -462,98 +496,104 @@ export default function SendScreen() {
       // All Solana wallets are Dynamic-managed — accountType is the source of truth.
       // The API signs using the from_address in custody context (dynamicWalletId is metadata only).
 
-      const confirmMessage = `Send ${amount} ${currentSymbol} to ${resolvedAddress.slice(0, 8)}...${resolvedAddress.slice(-4)} on Solana?`;
-      Alert.alert("Confirm Transaction", confirmMessage, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Send",
-          onPress: async () => {
-            setIsLoading(true);
-            try {
-              const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
-              if (!apiBaseUrl) throw new Error("No API URL configured. Set one in Settings → API.");
+      const executeSolanaSend = async () => {
+        setIsLoading(true);
+        try {
+          const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+          if (!apiBaseUrl) throw new Error("No API URL configured. Set one in Settings → API.");
 
-              // privateKey may be empty in strict Dynamic custody mode — that's OK
-              const privateKey = await SecureStorage.loadPrivateKey(selectedAccount.address);
+          // privateKey may be empty in strict Dynamic custody mode — that's OK
+          const privateKey = await SecureStorage.loadPrivateKey(selectedAccount.address);
 
-              const provider = new ApiProvider(apiBaseUrl);
-              const tokenRef = isToken && selectedAsset.type === "token" ? selectedAsset.token.address : undefined;
+          const provider = new ApiProvider(apiBaseUrl);
+          const tokenRef = isToken && selectedAsset.type === "token" ? selectedAsset.token.address : undefined;
 
-              // Use the split flow (build → sign → broadcast) as recommended by the API docs.
-              // Falls back gracefully: Dynamic custody signs via feePayer address.
-              let result;
-              try {
-                result = await provider.sendSplit(
-                  selectedAccount.address,
-                  resolvedAddress,
-                  amount,
-                  networkId,
-                  privateKey || undefined,
-                  tokenRef,
-                );
-              } catch (splitErr) {
-                // Fallback to one-shot send if split flow isn't supported
-                console.warn("[Transfer] Split flow failed, falling back to sendWithKey:", splitErr);
-                result = await provider.sendWithKey(
-                  selectedAccount.address,
-                  resolvedAddress,
-                  amount,
-                  networkId,
-                  privateKey || undefined,
-                  tokenRef,
-                );
-              }
+          // Use the split flow (build → sign → broadcast) as recommended by the API docs.
+          // Falls back gracefully: Dynamic custody signs via feePayer address.
+          let result;
+          try {
+            result = await provider.sendSplit(
+              selectedAccount.address,
+              resolvedAddress,
+              amount,
+              networkId,
+              privateKey || undefined,
+              tokenRef,
+            );
+          } catch (splitErr) {
+            // Fallback to one-shot send if split flow isn't supported
+            console.warn("[Transfer] Split flow failed, falling back to sendWithKey:", splitErr);
+            result = await provider.sendWithKey(
+              selectedAccount.address,
+              resolvedAddress,
+              amount,
+              networkId,
+              privateKey || undefined,
+              tokenRef,
+            );
+          }
 
-              // Record in transaction history — mark as pending until confirmed
-              const chainKey = getSolanaChainKey(networkId);
-              const txHash = result.txHash ?? `sol-${Date.now()}`;
-              const txRecord = {
-                hash: txHash,
-                from: selectedAccount.address,
-                to: resolvedAddress,
-                value: amount,
-                chainId: chainKey,
-                timestamp: Date.now(),
-                status: (result.status === "confirmed" ? "confirmed" : "pending") as "confirmed" | "pending",
-                type: "send" as const,
-                tokenSymbol: isToken && selectedAsset.type === "token" ? selectedAsset.token.symbol : "SOL",
-                tokenAddress: tokenRef,
-              };
-              useWalletStore.getState().addTransaction(selectedAccount.address, txRecord);
+          // Record in transaction history — mark as pending until confirmed
+          const chainKey = getSolanaChainKey(networkId);
+          const txHash = result.txHash ?? `sol-${Date.now()}`;
+          const txRecord = {
+            hash: txHash,
+            from: selectedAccount.address,
+            to: resolvedAddress,
+            value: amount,
+            chainId: chainKey,
+            timestamp: Date.now(),
+            status: (result.status === "confirmed" ? "confirmed" : "pending") as "confirmed" | "pending",
+            type: "send" as const,
+            tokenSymbol: isToken && selectedAsset.type === "token" ? selectedAsset.token.symbol : "SOL",
+            tokenAddress: tokenRef,
+          };
+          useWalletStore.getState().addTransaction(selectedAccount.address, txRecord);
 
-              // Track pending Solana txs so the poller picks them up
-              if (txRecord.status === "pending") {
-                useWalletStore.getState().addPendingTransaction(txRecord);
-              }
+          // Track pending Solana txs so the poller picks them up
+          if (txRecord.status === "pending") {
+            useWalletStore.getState().addPendingTransaction(txRecord);
+          }
 
-              // Refresh balances after send
-              BalanceService.forceRefreshBalances();
+          // Refresh balances after send
+          BalanceService.forceRefreshBalances();
 
-              Alert.alert(
-                "Transaction Sent",
-                result.txHash
-                  ? `Transaction hash: ${result.txHash.slice(0, 10)}...${result.explorerUrl ? `\n\n${result.explorerUrl}` : ""}`
-                  : "Transaction submitted.",
-                [{ text: "OK", onPress: () => router.back() }],
-              );
-            } catch (error: any) {
-              console.error("Solana send error:", error);
-              const message = error?.message ?? "Failed to send transaction";
-              // Handle 503 — custody/provider failure with actionable message
-              if (message.includes("503") || message.toLowerCase().includes("custody") || message.toLowerCase().includes("signing")) {
-                Alert.alert(
-                  "Signing Failed",
-                  "The selected wallet could not sign this transaction. This usually means the wallet is not managed by Dynamic in this environment.\n\nTry creating or importing the wallet again.",
-                );
-              } else {
-                Alert.alert("Error", message);
-              }
-            } finally {
-              setIsLoading(false);
-            }
-          },
-        },
-      ]);
+          if (demoMode) {
+            router.back();
+          } else {
+            Alert.alert(
+              "Transaction Sent",
+              result.txHash
+                ? `Transaction hash: ${result.txHash.slice(0, 10)}...${result.explorerUrl ? `\n\n${result.explorerUrl}` : ""}`
+                : "Transaction submitted.",
+              [{ text: "OK", onPress: () => router.back() }],
+            );
+          }
+        } catch (error: any) {
+          console.error("Solana send error:", error);
+          const message = error?.message ?? "Failed to send transaction";
+          if (message.includes("503") || message.toLowerCase().includes("custody") || message.toLowerCase().includes("signing")) {
+            Alert.alert(
+              "Signing Failed",
+              "The selected wallet could not sign this transaction. This usually means the wallet is not managed by Dynamic in this environment.\n\nTry creating or importing the wallet again.",
+            );
+          } else {
+            Alert.alert("Error", message);
+          }
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      if (demoMode) {
+        executeSolanaSend();
+      } else {
+        const confirmMessage = `Send ${amount} ${currentSymbol} to ${resolvedAddress.slice(0, 8)}...${resolvedAddress.slice(-4)} on Solana?`;
+        Alert.alert("Confirm Transaction", confirmMessage, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Send", onPress: executeSolanaSend },
+        ]);
+      }
       return;
     }
 
@@ -584,57 +624,80 @@ export default function SendScreen() {
       }
     }
 
-    const confirmMessage = `Send ${amount} ${currentSymbol} to ${resolvedAddress.slice(0, 6)}...${resolvedAddress.slice(-4)} on ${networkName}?`;
+    const executeEvmSend = async () => {
+      setIsLoading(true);
+      try {
+        let result;
 
-    Alert.alert("Confirm Transaction", confirmMessage, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Send",
-        onPress: async () => {
-          setIsLoading(true);
-          try {
-            let result;
+        if (isToken) {
+          result = await TransactionService.sendToken(
+            selectedAccount.address,
+            resolvedAddress,
+            selectedAsset.token.address,
+            amount,
+            selectedAsset.token.decimals,
+            effectiveChainId,
+            selectedAsset.token.symbol,
+          );
+        } else {
+          result = await TransactionService.sendNative(
+            selectedAccount.address,
+            resolvedAddress,
+            amount,
+            effectiveChainId,
+          );
+        }
 
-            if (isToken) {
-              // Send ERC20 token using the effective chain (token's chain)
-              result = await TransactionService.sendToken(
-                selectedAccount.address,
-                resolvedAddress,
-                selectedAsset.token.address,
-                amount,
-                selectedAsset.token.decimals,
-                effectiveChainId,
-                selectedAsset.token.symbol,
-              );
-            } else {
-              // Send native currency using the effective chain
-              result = await TransactionService.sendNative(
-                selectedAccount.address,
-                resolvedAddress,
-                amount,
-                effectiveChainId,
-              );
-            }
-
-            if ("hash" in result) {
-              Alert.alert(
-                "Transaction Sent",
-                `Transaction hash: ${result.hash.slice(0, 10)}...`,
-                [{ text: "OK", onPress: () => router.back() }],
-              );
-            } else {
-              Alert.alert("Error", result.error);
-            }
-          } catch (error) {
-            console.error("Send error:", error);
-            Alert.alert("Error", "Failed to send transaction");
-          } finally {
-            setIsLoading(false);
+        if ("hash" in result) {
+          if (demoMode) {
+            router.back();
+          } else {
+            Alert.alert(
+              "Transaction Sent",
+              `Transaction hash: ${result.hash.slice(0, 10)}...`,
+              [{ text: "OK", onPress: () => router.back() }],
+            );
           }
-        },
-      },
-    ]);
+        } else {
+          Alert.alert("Error", result.error);
+        }
+      } catch (error) {
+        console.error("Send error:", error);
+        Alert.alert("Error", "Failed to send transaction");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (demoMode) {
+      executeEvmSend();
+    } else {
+      const confirmMessage = `Send ${amount} ${currentSymbol} to ${resolvedAddress.slice(0, 6)}...${resolvedAddress.slice(-4)} on ${networkName}?`;
+      Alert.alert("Confirm Transaction", confirmMessage, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Send", onPress: executeEvmSend },
+      ]);
+    }
   };
+
+  // Demo mode: auto-send for NFC-initiated transfers once amount + address are ready
+  const autoSendFiredRef = React.useRef(false);
+  useEffect(() => {
+    if (
+      demoMode &&
+      addressParam &&
+      amountParam &&
+      hasAutoSelected &&
+      resolvedAddress &&
+      amount &&
+      parseFloat(amount) > 0 &&
+      !isLoading &&
+      !autoSendFiredRef.current
+    ) {
+      autoSendFiredRef.current = true;
+      handleSend();
+    }
+  }, [demoMode, addressParam, amountParam, hasAutoSelected, resolvedAddress, amount, isLoading]);
 
   const handleSelectAsset = (asset: SelectedAsset) => {
     setSelectedAsset(asset);
@@ -808,7 +871,9 @@ export default function SendScreen() {
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-      <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView style={[styles.content, {
+        gap: 16
+      }]} keyboardShouldPersistTaps="handled">
         {/* NFC source badge — shown when address was read from a Zap Pay tap */}
         {addressParam && (
           <View style={styles.nfcSourceBadge}>
@@ -819,12 +884,6 @@ export default function SendScreen() {
           </View>
         )}
 
-        <View style={[styles.balanceInfo, { backgroundColor: panelBg, borderColor: panelBorder }]}> 
-          <Text style={[styles.balanceLabel, { color: panelMuted }]}>Available:</Text>
-          <Text style={[styles.balanceValue, { color: panelText }]}>
-            {parseFloat(currentBalance).toFixed(6)} {currentSymbol}
-          </Text>
-        </View>
 
         <View style={[styles.amountCard, { backgroundColor: panelBg, borderColor: panelBorder }]}> 
           <View style={styles.amountCardHeaderRow}>
@@ -911,9 +970,14 @@ export default function SendScreen() {
           {amountError && <Text style={styles.amountCardError}>{amountError}</Text>}
         </View>
 
+        <View style={{justifyContent: "center", alignItems: "center", marginTop: -8}}>
+        <Ionicons name="arrow-down" size={24} color="#FFFFFF" />
+        </View>
+
         {/* Recipient field with integrated contact picker button */}
+        <View style={{justifyContent: "center", alignItems: "center", marginTop: 16}}>
+
         <AddressInput
-          label="Recipient"
           value={recipient}
           onChangeText={setRecipient}
           onResolvedAddress={setResolvedAddress}
@@ -925,11 +989,16 @@ export default function SendScreen() {
           onContactsPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           }}
-        />
+          />
+          </View>
 
         {/* Show contact name if recipient is a saved contact */}
         {existingContact && resolvedAddress && (
-          <View style={styles.contactBadge}>
+          <View style={[styles.contactBadge, {
+            justifyContent: "center",
+            marginTop: 8,
+            alignItems: "center"
+          }]}>
             <Ionicons name="person" size={14} color="#10B981" />
             <Text style={styles.contactBadgeText}>{existingContact.name}</Text>
           </View>
@@ -1035,14 +1104,15 @@ export default function SendScreen() {
         {/* Save to contacts button - show after resolving a new address */}
         {resolvedAddress && !existingContact && (
           <TouchableOpacity
-            style={styles.saveContactButton}
+            style={[styles.saveContactPill, { borderColor: accentColor + "40" }]}
             onPress={() => {
               setNewContactName("");
               setShowSaveContactModal(true);
             }}
+            activeOpacity={0.75}
           >
-            <Ionicons name="person-add-outline" size={16} color={accentColor} />
-            <Text style={[styles.saveContactText, { color: accentColor }]}>Save to contacts</Text>
+            <Ionicons name="person-add-outline" size={14} color={accentColor} />
+            <Text style={[styles.saveContactPillText, { color: accentColor }]}>Save to contacts</Text>
           </TouchableOpacity>
         )}
       </ScrollView>
@@ -1388,6 +1458,22 @@ const styles = StyleSheet.create({
     color: "#569F8C",
     fontSize: 13,
     fontWeight: "500",
+  },
+  saveContactPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "center",
+    gap: 6,
+    marginTop: -4,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  saveContactPillText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   amountContainer: {
     position: "relative",

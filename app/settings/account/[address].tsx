@@ -85,8 +85,8 @@ export default function AccountDetailScreen() {
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [isLoadingKey, setIsLoadingKey] = useState(false);
 
-  // All Solana wallets are created via the Dynamic API — accountType is the source of truth
-  const isDynamic = account?.accountType === "solana";
+  // Solana (API-based) and Dynamic (SDK-based) wallets don't have local private keys
+  const isDynamic = account?.accountType === "solana" || account?.accountType === "dynamic";
 
   const autoPayEnabled = !!account?.autoPayLimit;
   const [autoPayLimitInput, setAutoPayLimitInput] = useState(

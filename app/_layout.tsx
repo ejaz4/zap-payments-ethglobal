@@ -14,6 +14,7 @@ import {
     useAccentColor,
 } from "@/store/appearance";
 
+import { dynamicClient } from "@/crypto/dynamic/client";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { SecureStorage } from "@/services/storage";
 import { WalletService } from "@/services/wallet";
@@ -129,6 +130,8 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
+      {/* Dynamic SDK WebView — required for auth flows and embedded wallet signing */}
+      <dynamicClient.reactNative.WebView />
       <NfcProvider>
         <ThemeProvider value={theme}>
           <RootLayoutNav />

@@ -157,7 +157,7 @@ export default function ENSManagementScreen() {
     );
   }
 
-  const isEVM = account.accountType !== "solana";
+  const isEVM = account.accountType !== "solana" && account.accountType !== "dynamic";
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>

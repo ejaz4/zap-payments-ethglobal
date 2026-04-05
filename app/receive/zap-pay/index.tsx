@@ -17,18 +17,19 @@ import {
 } from "@/components/ui/NetworkSelector";
 import { TokenInfo } from "@/config/tokens";
 import { NATIVE_TOKEN_ADDRESS } from "@/config/uniswap";
+import { ApiProvider } from "@/crypto/provider/api";
 import { useErc20Listener } from "@/hooks/use-erc20-listener";
 import { useTokenPrice } from "@/hooks/use-prices";
 import { useSwapExecution } from "@/hooks/use-swap-execution";
 import { useUniswapQuote } from "@/hooks/use-uniswap-quote";
 import { PriceService } from "@/services/price";
-import { ApiProvider } from "@/crypto/provider/api";
 import { BalanceService } from "@/services/wallet";
 import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedCurrency } from "@/store/currency";
 import { useProviderStore } from "@/store/provider";
 import { useTokenStore } from "@/store/tokens";
 import {
+  getDynamicChainKey,
   getSolanaChainKey,
   useSelectedAccount,
   useWalletStore,
@@ -42,6 +43,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -107,6 +109,8 @@ interface ReceivedPayment {
 
 const DEFAULT_TOLERANCE = 0.05;
 
+const contactless = require("@/assets/images/contactless.png");
+
 export default function ZapPayReceiveScreen() {
   const accentColor = useAccentColor();
   const bg = tintedBackground("#000000");
@@ -116,13 +120,17 @@ export default function ZapPayReceiveScreen() {
   const setSelectedChainId = useWalletStore((s) => s.setSelectedChainId);
   const getTokensForChain = useTokenStore((s) => s.getTokensForChain);
   const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
-  const isSolanaAccount = selectedAccount?.accountType === "solana";
-  const solanaNetworkName =
-    SOLANA_NETWORKS.find((n) => n.networkId === (selectedApiNetworkId ?? "dynamic-mainnet"))
-      ?.displayName ?? "Solana";
+  const isSolanaAccount = selectedAccount?.accountType === "solana" || selectedAccount?.accountType === "dynamic";
+  const isDynamicAccount = selectedAccount?.accountType === "dynamic";
+  const solanaNetworkName = isDynamicAccount
+    ? "Solana Devnet"
+    : (SOLANA_NETWORKS.find((n) => n.networkId === (selectedApiNetworkId ?? "dynamic-mainnet"))
+        ?.displayName ?? "Solana");
   const networkConfig = EthersClient.getNetworkConfig(selectedChainId);
   const effectiveChainId = isSolanaAccount
-    ? getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet")
+    ? (isDynamicAccount
+        ? getDynamicChainKey("sol-devnet")
+        : getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet"))
     : selectedChainId;
   const payloadNetwork = isSolanaAccount ? "solana" : "ethereum";
   const nativeSymbol = isSolanaAccount
@@ -141,11 +149,10 @@ export default function ZapPayReceiveScreen() {
 
   const availableTokens = useMemo(() => {
     if (isSolanaAccount) {
-      const chainKey = getSolanaChainKey(selectedApiNetworkId ?? "dynamic-mainnet");
-      return getTokensForChain(chainKey);
+      return getTokensForChain(effectiveChainId);
     }
     return getTokensForChain(selectedChainId);
-  }, [isSolanaAccount, getTokensForChain, selectedChainId, selectedApiNetworkId]);
+  }, [isSolanaAccount, getTokensForChain, selectedChainId, effectiveChainId]);
 
   const symbol = selectedAsset.type === "native" ? nativeSymbol : selectedAsset.token.symbol;
   const requestedTokenAddress = selectedAsset.type === "token" ? selectedAsset.token.address : undefined;
@@ -851,6 +858,7 @@ export default function ZapPayReceiveScreen() {
 
           {/* Status text */}
           <Animated.View entering={FadeInDown.delay(150)} style={styles.statusArea}>
+            <Image source={contactless} />
             <Text style={[styles.statusText, { color: getStatusColor() }]}>
               {getStatusMessage()}
             </Text>

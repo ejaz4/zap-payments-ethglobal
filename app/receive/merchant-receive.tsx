@@ -11,7 +11,9 @@
  * Ported from smart-swap-hub MerchantTab for React Native.
  */
 
+import { useNfc } from "@/app/nfc/context";
 import { ChainId, EthersClient } from "@/app/profiles/client";
+import { formatUnits } from "ethers";
 import { DEFAULT_TOKENS, TokenInfo } from "@/config/tokens";
 import {
     NATIVE_TOKEN_ADDRESS,
@@ -28,19 +30,36 @@ import {
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Modal,
+    Platform,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
+    Vibration,
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+// HCE is Android-only
+let HCESession: any = null;
+let NFCTagType4: any = null;
+let NFCTagType4NDEFContentType: any = null;
+try {
+  if (Platform.OS === "android") {
+    const hce = require("react-native-hce");
+    HCESession = hce.HCESession;
+    NFCTagType4 = hce.NFCTagType4;
+    NFCTagType4NDEFContentType = hce.NFCTagType4NDEFContentType;
+  }
+} catch (e) {
+  console.warn("[MerchantReceive] react-native-hce not available:", e);
+}
 
 type RequestState = "setup" | "listening" | "received";
 
@@ -99,6 +118,12 @@ export default function MerchantReceiveScreen() {
   const [requestAmount, setRequestAmount] = useState("");
   const [tolerance, setTolerance] = useState(5);
   const [showTokenPicker, setShowTokenPicker] = useState(false);
+  const [tapCount, setTapCount] = useState(0);
+
+  // NFC HCE broadcasting
+  const { stopListening, startListening } = useNfc();
+  const sessionRef = useRef<any>(null);
+  const cleanupListenersRef = useRef<(() => void) | null>(null);
 
   // Settlement token
   const tokenOptions = useMemo(() => getStableTokens(selectedChainId), [selectedChainId]);
@@ -113,7 +138,7 @@ export default function MerchantReceiveScreen() {
 
   // ERC20 transfer listener
   const {
-    transfer,
+    transfer: erc20Transfer,
     reset: resetListener,
   } = useErc20Listener(
     selectedAccount?.address,
@@ -121,10 +146,77 @@ export default function MerchantReceiveScreen() {
     state === "listening",
   );
 
-  // Move to received state when transfer arrives
+  // Native balance polling — detect native ETH/MATIC/etc. transfers
+  const initialBalanceRef = useRef<bigint>(0n);
+  const balancePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [nativeTransfer, setNativeTransfer] = useState<{
+    formatted: string;
+    symbol: string;
+    decimals: number;
+  } | null>(null);
+
+  const nativeSymbol = networkConfig?.nativeCurrency.symbol ?? "ETH";
+  const nativeDecimals = networkConfig?.nativeCurrency.decimals ?? 18;
+
+  const startBalancePolling = useCallback(async () => {
+    if (!selectedAccount) return;
+    try {
+      initialBalanceRef.current = await EthersClient.getNativeBalance(
+        selectedAccount.address,
+        selectedChainId,
+      );
+    } catch (e) {
+      console.warn("[MerchantReceive] Failed to get initial balance:", e);
+    }
+
+    balancePollRef.current = setInterval(async () => {
+      try {
+        const current = await EthersClient.getNativeBalance(
+          selectedAccount!.address,
+          selectedChainId,
+        );
+        if (current > initialBalanceRef.current) {
+          const increase = current - initialBalanceRef.current;
+          const formatted = formatUnits(increase, nativeDecimals);
+          console.log("[MerchantReceive] Native balance increase:", formatted, nativeSymbol);
+          setNativeTransfer({ formatted, symbol: nativeSymbol, decimals: nativeDecimals });
+          stopBalancePolling();
+        }
+      } catch {
+        // Transient RPC error — keep polling
+      }
+    }, 2000);
+  }, [selectedAccount, selectedChainId, nativeSymbol, nativeDecimals]);
+
+  const stopBalancePolling = useCallback(() => {
+    if (balancePollRef.current) {
+      clearInterval(balancePollRef.current);
+      balancePollRef.current = null;
+    }
+  }, []);
+
+  // Unified transfer — whichever arrives first (ERC20 or native)
+  const transfer = useMemo(() => {
+    if (erc20Transfer) return erc20Transfer;
+    if (nativeTransfer) return {
+      token: NATIVE_TOKEN_ADDRESS,
+      from: "unknown",
+      formatted: nativeTransfer.formatted,
+      raw: "0",
+      symbol: nativeTransfer.symbol,
+      decimals: nativeTransfer.decimals,
+      txHash: "",
+    };
+    return null;
+  }, [erc20Transfer, nativeTransfer]);
+
+  // Move to received state when any transfer arrives
   useEffect(() => {
     if (transfer && state === "listening") {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Vibration.vibrate([0, 50, 50, 50]);
+      stopBalancePolling();
+      stopBroadcasting();
       setState("received");
     }
   }, [transfer, state]);
@@ -182,14 +274,113 @@ export default function MerchantReceiveScreen() {
     return "pending";
   }, [state, isSameToken, transfer, swapQuote, requestedNum, minAcceptable]);
 
+  // Auto-swap: execute as soon as a valid quote arrives for a different token
+  const autoSwapFiredRef = useRef(false);
+  useEffect(() => {
+    if (
+      state === "received" &&
+      !isSameToken &&
+      swapQuote &&
+      selectedAccount &&
+      swapStep === "idle" &&
+      !autoSwapFiredRef.current
+    ) {
+      autoSwapFiredRef.current = true;
+      console.log("[MerchantReceive] Auto-swap: executing swap", swapQuote.formattedIn, "→", swapQuote.formattedOut);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      executeSwap(swapQuote, selectedAccount.address);
+    }
+  }, [state, isSameToken, swapQuote, selectedAccount, swapStep, executeSwap]);
+
   const gasUsd = swapQuote?.gasFeeUSD
     ? `$${parseFloat(swapQuote.gasFeeUSD).toFixed(4)}`
     : null;
 
-  const handleStartListening = () => {
+  // ---------------------------------------------------------------------------
+  // HCE NFC broadcasting
+  // ---------------------------------------------------------------------------
+  const stopBroadcasting = useCallback(async () => {
+    try {
+      cleanupListenersRef.current?.();
+      cleanupListenersRef.current = null;
+      if (sessionRef.current) {
+        await sessionRef.current.setEnabled(false);
+      }
+      sessionRef.current = null;
+    } catch (e) {
+      console.warn("[MerchantReceive] Error stopping HCE:", e);
+    }
+  }, []);
+
+  const startBroadcasting = useCallback(async () => {
+    if (!selectedAccount || Platform.OS !== "android") return;
+    if (!HCESession || !NFCTagType4 || !NFCTagType4NDEFContentType) return;
+
+    try {
+      const payload = JSON.stringify({
+        chainId: selectedChainId,
+        address: selectedAccount.address,
+        network: "ethereum",
+        type: "receive-anything",
+        amount: parseFloat(requestAmount).toString(),
+        settleTokenAddress: settleToken.address,
+        settleTokenSymbol: settleToken.symbol,
+        settleTokenDecimals: settleToken.decimals,
+      });
+
+      console.log("[MerchantReceive] HCE payload:", payload);
+
+      const tag = new NFCTagType4({
+        type: NFCTagType4NDEFContentType.Text,
+        content: payload,
+        writable: true,
+      });
+
+      const session = await HCESession.getInstance();
+      sessionRef.current = session;
+      await session.setApplication(tag);
+
+      const cleanupRead = session.on(
+        HCESession.Events.HCE_STATE_READ,
+        () => {
+          console.log("[MerchantReceive] HCE tag read by sender");
+          setTapCount((c: number) => c + 1);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Vibration.vibrate(50);
+        },
+      );
+
+      cleanupListenersRef.current = cleanupRead;
+      await session.setEnabled(true);
+      console.log("[MerchantReceive] HCE broadcasting started");
+    } catch (e) {
+      console.warn("[MerchantReceive] Failed to start HCE:", e);
+    }
+  }, [selectedAccount, selectedChainId, requestAmount, settleToken]);
+
+  // Disable NFC reading while broadcasting (avoid reading our own tag)
+  useFocusEffect(
+    useCallback(() => {
+      if (state === "listening") {
+        stopListening();
+      }
+      return () => {
+        startListening();
+      };
+    }, [state, stopListening, startListening]),
+  );
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { stopBroadcasting(); stopBalancePolling(); };
+  }, [stopBroadcasting, stopBalancePolling]);
+
+  const handleStartListening = async () => {
     if (!requestAmount || parseFloat(requestAmount) <= 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setState("listening");
+    await startBroadcasting();
+    startBalancePolling();
   };
 
   const handleExecuteSwap = () => {
@@ -206,12 +397,17 @@ export default function MerchantReceiveScreen() {
     }
   }, [swapStep]);
 
-  const handleReset = useCallback(() => {
+  const handleReset = useCallback(async () => {
+    await stopBroadcasting();
+    stopBalancePolling();
+    autoSwapFiredRef.current = false;
     setState("setup");
     setRequestAmount("");
+    setTapCount(0);
+    setNativeTransfer(null);
     resetListener();
     resetSwap();
-  }, [resetListener, resetSwap]);
+  }, [resetListener, resetSwap, stopBroadcasting, stopBalancePolling]);
 
   const isSwapping = ["checking-approval", "approving", "signing-permit", "building-swap", "swapping"].includes(swapStep);
   const explorerUrl = networkConfig?.blockExplorerUrl;
@@ -301,12 +497,21 @@ export default function MerchantReceiveScreen() {
             <View style={[styles.card, styles.listeningCard]}>
               <View style={styles.listeningHeader}>
                 <ActivityIndicator size="small" color={accentColor} />
-                <Text style={styles.listeningTitle}>Listening for incoming transfers...</Text>
+                <Text style={styles.listeningTitle}>
+                  {Platform.OS === "android" ? "Broadcasting via NFC..." : "Listening for incoming transfers..."}
+                </Text>
               </View>
               <Text style={styles.listeningDesc}>
-                Waiting for any ERC-20 token to be sent to your wallet. The first
-                incoming transfer will be captured.
+                {Platform.OS === "android"
+                  ? "Hold another device near to share your payment request. Any incoming token transfer will be captured."
+                  : "Waiting for any ERC-20 token to be sent to your wallet. The first incoming transfer will be captured."}
               </Text>
+              {tapCount > 0 && (
+                <View style={styles.tapBadge}>
+                  <Ionicons name="phone-portrait-outline" size={14} color={accentColor} />
+                  <Text style={styles.tapBadgeText}>{tapCount} tap{tapCount !== 1 ? "s" : ""} detected</Text>
+                </View>
+              )}
 
               <View style={styles.listeningDetails}>
                 <View style={styles.detailRow}>
@@ -655,4 +860,6 @@ const styles = StyleSheet.create({
   },
   modalOptionSymbol: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
   modalOptionName: { color: "#9CA3AF", fontSize: 12, marginTop: 2 },
+  tapBadge: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#141B17", borderRadius: 8, padding: 8, marginTop: 4 },
+  tapBadgeText: { color: "#D1D5DB", fontSize: 12, fontWeight: "600" },
 });

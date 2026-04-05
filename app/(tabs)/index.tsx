@@ -20,12 +20,15 @@ import {
   Account,
   CARD_BACKGROUNDS,
   CardBackground,
+  DYNAMIC_NETWORK_IDS,
+  getDynamicChainKey,
   getSolanaChainKey,
   SOLANA_NETWORK_IDS,
   TokenBalance,
   useSelectedAccount,
   useWalletStore,
 } from "@/store/wallet";
+import { DynamicProvider } from "@/crypto/provider/dynamic";
 import { useZapContractStore } from "@/store/zap-contract";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -221,18 +224,21 @@ export default function HomeScreen() {
 
   const nfcState = useContext(NfcContext);
 
-  const isSolanaAccount = currentAccount?.accountType === "solana";
+  const isSolanaAccount = currentAccount?.accountType === "solana" || currentAccount?.accountType === "dynamic";
 
   // Multi-chain: all non-zero native balances for current account
   const allChainNativeBalances = useMemo(() => {
     if (!currentAccount) return [];
     if (isSolanaAccount) {
-      // Show a row for each Solana network that has a non-zero balance
-      return SOLANA_NETWORK_IDS
+      const isDynamic = currentAccount.accountType === "dynamic";
+      const networkIds = isDynamic ? [...DYNAMIC_NETWORK_IDS] : [...SOLANA_NETWORK_IDS];
+      const getChainKey = isDynamic ? getDynamicChainKey : getSolanaChainKey;
+      return networkIds
         .map((networkId) => {
-          const chainKey = getSolanaChainKey(networkId);
+          const chainKey = getChainKey(networkId);
           const balance = allNativeBalances[`${currentAccount.address}_${chainKey}`] || "0";
-          const label = networkId === "dynamic-mainnet" ? "Solana" : "Solana Devnet";
+          const label = networkId.includes("devnet") || networkId.includes("testnet")
+            ? "Solana Devnet" : "Solana";
           return {
             chainId: chainKey,
             balance,
@@ -254,9 +260,12 @@ export default function HomeScreen() {
   const allChainTokenBalances = useMemo(() => {
     if (!currentAccount) return [];
     if (isSolanaAccount) {
+      const isDynamic = currentAccount.accountType === "dynamic";
+      const networkIds = isDynamic ? [...DYNAMIC_NETWORK_IDS] : [...SOLANA_NETWORK_IDS];
+      const getChainKey = isDynamic ? getDynamicChainKey : getSolanaChainKey;
       const result: TokenBalance[] = [];
-      for (const networkId of SOLANA_NETWORK_IDS) {
-        const chainKey = getSolanaChainKey(networkId);
+      for (const networkId of networkIds) {
+        const chainKey = getChainKey(networkId);
         const tokens = allTokenBalances[`${currentAccount.address}_${chainKey}`] || [];
         result.push(...tokens);
       }
@@ -436,6 +445,44 @@ export default function HomeScreen() {
     if (!currentAccount) return;
     const walletStoreState = useWalletStore.getState();
 
+    if (currentAccount.accountType === "dynamic") {
+      // Dynamic accounts use the DynamicProvider (Solana Connection via Dynamic SDK)
+      try {
+        const dynProvider = new DynamicProvider();
+        await Promise.allSettled(
+          DYNAMIC_NETWORK_IDS.map(async (networkId) => {
+            const chainKey = getDynamicChainKey(networkId);
+            try {
+              const [nativeResult, tokenResult] = await Promise.allSettled([
+                dynProvider.getNativeBalance(currentAccount.address, networkId),
+                dynProvider.getTokenBalances(currentAccount.address, networkId),
+              ]);
+              if (nativeResult.status === "fulfilled") {
+                walletStoreState.setNativeBalance(currentAccount.address, chainKey, nativeResult.value.amount);
+              }
+              if (tokenResult.status === "fulfilled") {
+                const dynTokens: TokenBalance[] = tokenResult.value.map((b) => ({
+                  address: b.assetId.replace(`token:${networkId}:`, ""),
+                  symbol: b.symbol || "SPL",
+                  name: b.symbol || "SPL Token",
+                  decimals: b.decimals,
+                  balance: b.amountAtomic,
+                  balanceFormatted: b.amount,
+                  chainId: chainKey,
+                }));
+                walletStoreState.setTokenBalances(currentAccount.address, chainKey, dynTokens);
+              }
+            } catch (err) {
+              console.warn(`[Home] Failed to fetch Dynamic balances for ${networkId}:`, err);
+            }
+          }),
+        );
+      } catch (err) {
+        console.warn("[Home] Failed to fetch Dynamic balances:", err);
+      }
+      return;
+    }
+
     if (currentAccount.accountType === "solana") {
       const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
       if (!apiBaseUrl) return;
@@ -594,7 +641,25 @@ export default function HomeScreen() {
   // Sum total portfolio value for an account across all enabled networks
   const getAccountTotalValue = (account: Account) => {
     let total = 0;
-    if (account.accountType === "solana") {
+    if (account.accountType === "dynamic") {
+      const solPrice = tokenPrices.get("SOL");
+      for (const networkId of DYNAMIC_NETWORK_IDS) {
+        const chainKey = getDynamicChainKey(networkId);
+        const nativeBal = allNativeBalances[`${account.address}_${chainKey}`];
+        if (nativeBal && solPrice) {
+          const num = parseFloat(nativeBal);
+          if (!isNaN(num)) total += num * solPrice;
+        }
+        const tokens = allTokenBalances[`${account.address}_${chainKey}`] || [];
+        for (const token of tokens) {
+          const price = tokenPrices.get(token.symbol.toUpperCase());
+          if (price) {
+            const num = parseFloat(token.balanceFormatted);
+            if (!isNaN(num)) total += num * price;
+          }
+        }
+      }
+    } else if (account.accountType === "solana") {
       const solPrice = tokenPrices.get("SOL");
       for (const networkId of SOLANA_NETWORK_IDS) {
         const chainKey = getSolanaChainKey(networkId);

@@ -9,16 +9,16 @@ import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    Modal,
-    StyleSheet,
-    Text,
-    TextInput,
-    TextInputProps,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Image,
+  Modal,
+  StyleSheet,
+  Text,
+  TextInput,
+  TextInputProps,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { Input } from "./Input";
 
@@ -109,9 +109,9 @@ export function AddressInput({
 
   const compatibleAccounts = useMemo(() => {
     const filtered = accounts.filter((account) => {
-      const isAccountSolana = account.accountType === "solana";
-      if (isSolana && !isAccountSolana) return false;
-      if (!isSolana && isAccountSolana) return false;
+      const isAccountSVM = account.accountType === "solana" || account.accountType === "dynamic";
+      if (isSolana && !isAccountSVM) return false;
+      if (!isSolana && isAccountSVM) return false;
       if (selectedAccount && account.address.toLowerCase() === selectedAccount.address.toLowerCase()) {
         return false;
       }
@@ -290,7 +290,7 @@ export function AddressInput({
 
   const localWalletName = matchingContact?.name ?? matchingAccount?.name ?? null;
 
-  const pillPrimaryText = selectedEnsName || localWalletName || (lookupAddress ? shortAddress(lookupAddress) : "Tap to choose recipient");
+  const pillPrimaryText = selectedEnsName || localWalletName || (lookupAddress ? shortAddress(lookupAddress) : "Choose");
   const pillSecondaryText = selectedEnsName
     ? (localWalletName || (lookupAddress ? shortAddress(lookupAddress) : null))
     : (localWalletName && lookupAddress ? shortAddress(lookupAddress) : null);
@@ -306,10 +306,10 @@ export function AddressInput({
   const showProfileCard = isENSInput && (ensProfile || profileLoading) && effectiveResolved;
 
   return (
-    <View>
+    <View style={{minWidth: 150}}>
       {usePickerPill ? (
         <View style={styles.pillContainer}>
-          {label ? <Text style={styles.pillLabel}>{label}</Text> : null}
+          {/* {label ? <Text style={styles.pillLabel}>{label}</Text> : null} */}
           <TouchableOpacity
             style={styles.recipientPill}
             onPress={openRecipientPicker}
@@ -458,10 +458,14 @@ export function AddressInput({
             <Text style={[styles.pickerTitle, { color: pickerText }]}>Choose Recipient</Text>
             <TouchableOpacity
               onPress={() => commitRecipientValue(pickerInput.trim())}
-              style={styles.pickerHeaderButton}
+              style={[
+                styles.pickerUsePill,
+                { backgroundColor: pickerInput.trim() ? accentColor : "#374151" },
+              ]}
               disabled={!pickerInput.trim()}
+              activeOpacity={0.8}
             >
-              <Text style={[styles.pickerUseText, { color: accentColor }, !pickerInput.trim() && styles.pickerUseTextDisabled]}>Use</Text>
+              <Text style={[styles.pickerUseText, !pickerInput.trim() && styles.pickerUseTextDisabled]}>Use</Text>
             </TouchableOpacity>
           </View>
 
@@ -745,13 +749,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
+  pickerUsePill: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
   pickerUseText: {
-    color: "#569F8C",
+    color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "700",
   },
   pickerUseTextDisabled: {
-    color: "#4B5563",
+    color: "#6B7280",
   },
   pickerBody: {
     flex: 1,

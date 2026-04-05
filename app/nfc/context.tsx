@@ -34,14 +34,21 @@ export interface NfcPaymentData {
   address: string; // Contract address (contract) or wallet address (zap-pay)
   network: string; // Network type ("ethereum" or "solana")
   raw: string; // Raw JSON string
-  /** "zap-pay" = direct wallet tap-to-pay via HCE; "contract" = smart contract terminal */
-  type: "zap-pay" | "contract";
-  /** Requested amount for zap-pay tags (native currency string) */
+  /** "zap-pay" = direct wallet tap-to-pay via HCE; "contract" = smart contract terminal;
+   *  "receive-anything" = receiver accepts any token, will swap to settlement token */
+  type: "zap-pay" | "contract" | "receive-anything";
+  /** Requested amount for zap-pay / receive-anything tags */
   amount?: string;
   /** Optional token address for zap-pay token requests */
   tokenAddress?: string;
   /** Optional token symbol for UI/debug */
   tokenSymbol?: string;
+  /** Settlement token address for receive-anything (what the receiver wants to end up with) */
+  settleTokenAddress?: string;
+  /** Settlement token symbol */
+  settleTokenSymbol?: string;
+  /** Settlement token decimals */
+  settleTokenDecimals?: number;
 }
 
 interface NfcContextType {
@@ -260,15 +267,21 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
         }
       }
 
+      const knownTypes = ["zap-pay", "receive-anything", "contract"] as const;
+      const parsedType = knownTypes.includes(data.type) ? data.type : "contract";
+
       const paymentData: NfcPaymentData = {
         chainId,
         address: data.address,
         network: data.network,
         raw: text,
-        type: data.type === "zap-pay" ? "zap-pay" : "contract",
+        type: parsedType,
         amount: data.amount ? String(data.amount) : undefined,
         tokenAddress: data.tokenAddress ? String(data.tokenAddress) : undefined,
         tokenSymbol: data.tokenSymbol ? String(data.tokenSymbol) : undefined,
+        settleTokenAddress: data.settleTokenAddress ? String(data.settleTokenAddress) : undefined,
+        settleTokenSymbol: data.settleTokenSymbol ? String(data.settleTokenSymbol) : undefined,
+        settleTokenDecimals: data.settleTokenDecimals != null ? Number(data.settleTokenDecimals) : undefined,
       };
 
       console.log("[NFC] ===== PAYMENT DATA =====");
@@ -304,16 +317,15 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
     const store = useWalletStore.getState();
     const isSolanaRequest = payment.network === "solana" ||
       Object.values(SOLANA_CHAIN_KEYS).includes(payment.chainId as ChainId);
-    const currentIsSolana = selectedAccount?.accountType === "solana";
+    const currentIsSVM = selectedAccount?.accountType === "solana" || selectedAccount?.accountType === "dynamic";
 
-    if (isSolanaRequest !== currentIsSolana) {
-      // Need to switch wallet type (EVM↔Solana)
-      const targetType = isSolanaRequest ? "solana" : "evm";
-      const matchingAccountIdx = store.accounts.findIndex(
-        (a) => (a.accountType ?? "evm") === targetType,
-      );
+    if (isSolanaRequest !== currentIsSVM) {
+      // Need to switch wallet type (EVM↔SVM)
+      const matchingAccountIdx = isSolanaRequest
+        ? store.accounts.findIndex((a) => a.accountType === "solana" || a.accountType === "dynamic")
+        : store.accounts.findIndex((a) => (a.accountType ?? "evm") === "evm");
       if (matchingAccountIdx >= 0) {
-        console.log(`[NFC] Switching to ${targetType} wallet (index ${matchingAccountIdx})`);
+        console.log(`[NFC] Switching to ${isSolanaRequest ? "SVM" : "EVM"} wallet (index ${matchingAccountIdx})`);
         store.setSelectedAccountIndex(matchingAccountIdx);
       } else {
         Alert.alert(
@@ -386,6 +398,19 @@ export const NfcProvider = ({ children }: { children: React.ReactNode }) => {
           chainId: payment.chainId.toString(),
           ...(payment.amount ? { amount: payment.amount } : {}),
           ...(payment.tokenAddress ? { tokenAddress: payment.tokenAddress } : {}),
+        },
+      } as any);
+    } else if (payment.type === "receive-anything") {
+      // Receiver accepts any token — show send-anything screen
+      router.push({
+        pathname: "/send/send-anything",
+        params: {
+          address: payment.address,
+          chainId: payment.chainId.toString(),
+          amount: payment.amount ?? "",
+          settleTokenAddress: payment.settleTokenAddress ?? "",
+          settleTokenSymbol: payment.settleTokenSymbol ?? "",
+          settleTokenDecimals: (payment.settleTokenDecimals ?? 18).toString(),
         },
       } as any);
     } else {

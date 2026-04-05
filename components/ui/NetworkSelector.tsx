@@ -113,7 +113,7 @@ export function NetworkSelector({
   const setSelectedApiNetworkId = useProviderStore((s) => s.setSelectedApiNetworkId);
 
   const selectedAccount = useSelectedAccount();
-  const isSolanaAccount = selectedAccount?.accountType === "solana";
+  const isSolanaAccount = selectedAccount?.accountType === "solana" || selectedAccount?.accountType === "dynamic";
 
   // When the modal opens, ensure the provider matches the account type.
   useEffect(() => {
@@ -273,7 +273,7 @@ export function NetworkBadge({ chainId, onPress }: NetworkBadgeProps) {
   const scheme = useColorScheme() ?? "dark";
   const isLight = scheme === "light";
   const selectedAccount = useSelectedAccount();
-  const isSolanaAccount = selectedAccount?.accountType === "solana";
+  const isSolanaAccount = selectedAccount?.accountType === "solana" || selectedAccount?.accountType === "dynamic";
   const selectedApiNetworkId = useProviderStore((s) => s.selectedApiNetworkId);
 
   let icon: string;

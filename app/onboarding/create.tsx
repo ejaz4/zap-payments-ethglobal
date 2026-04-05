@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui";
+import { dynamicClient } from "@/crypto/dynamic/client";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { WalletService } from "@/services/wallet";
 import { tintedBackground, useAccentColor } from "@/store/appearance";
@@ -17,7 +18,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type Step = "type" | "generate" | "backup";
-type AccountType = "evm" | "solana";
+type AccountType = "evm" | "solana" | "dynamic";
 
 export default function CreateWalletScreen() {
   const accentColor = useAccentColor();
@@ -54,10 +55,44 @@ export default function CreateWalletScreen() {
     setIsLoading(true);
     try {
       if (isAddingAccount) {
-        const address =
-          accountType === "solana"
-            ? await WalletService.createSolanaAccount()
-            : await WalletService.createNewAccount();
+        let address: string | null = null;
+
+        if (accountType === "dynamic") {
+          // Check if user already has a Dynamic wallet — if so, they need
+          // to sign in with a different identity to get a new one.
+          const hasDynamicAlready = accounts.some(
+            (a) => a.accountType === "dynamic",
+          );
+
+          // If they already have one, log out so the auth UI shows a fresh
+          // login (different email/social = different wallet).
+          if (hasDynamicAlready && dynamicClient.auth.authenticatedUser) {
+            await dynamicClient.auth.logout();
+          }
+
+          // Show auth UI if not already authenticated
+          if (!dynamicClient.auth.authenticatedUser) {
+            await new Promise<void>((resolve, reject) => {
+              const cleanup = () => {
+                dynamicClient.auth.off("authSuccess", onSuccess);
+                dynamicClient.auth.off("authFailed", onFailed);
+              };
+              const onSuccess = () => { cleanup(); resolve(); };
+              const onFailed = (_data: unknown, reason: unknown) => {
+                cleanup();
+                reject(new Error(typeof reason === "string" ? reason : "Authentication cancelled"));
+              };
+              dynamicClient.auth.on("authSuccess", onSuccess);
+              dynamicClient.auth.on("authFailed", onFailed);
+              dynamicClient.ui.auth.show();
+            });
+          }
+          address = await WalletService.createDynamicAccount();
+        } else if (accountType === "solana") {
+          address = await WalletService.createSolanaAccount();
+        } else {
+          address = await WalletService.createNewAccount();
+        }
 
         if (address) {
           setIsAddingAccount(false);
@@ -160,7 +195,7 @@ export default function CreateWalletScreen() {
             >
               <Text style={styles.typeIcon}>☀️</Text>
               <Text style={[styles.typeLabel, { color: textPrimary }]}>Solana</Text>
-              <Text style={[styles.typeDesc, { color: textMuted }]}> 
+              <Text style={[styles.typeDesc, { color: textMuted }]}>
                 Solana mainnet and devnet via the API provider
               </Text>
               {accountType === "solana" && (
@@ -170,6 +205,29 @@ export default function CreateWalletScreen() {
               )}
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={[
+              styles.typeCardWide,
+              { backgroundColor: cardBg },
+              accountType === "dynamic" && styles.typeCardSelected,
+              accountType === "dynamic" && { borderColor: "#F5841F" },
+              accountType === "dynamic" && isLight && { backgroundColor: "#FEF3E7" },
+            ]}
+            onPress={() => setAccountType("dynamic")}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.typeIcon}>🔐</Text>
+            <Text style={[styles.typeLabel, { color: textPrimary }]}>Dynamic</Text>
+            <Text style={[styles.typeDesc, { color: textMuted }]}>
+              MPC-secured Solana wallet via Dynamic SDK — email or social login, no seed phrase
+            </Text>
+            {accountType === "dynamic" && (
+              <View style={styles.typeCheck}>
+                <Ionicons name="checkmark-circle" size={20} color="#F5841F" />
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
 
         <View style={styles.footer}>
@@ -185,6 +243,7 @@ export default function CreateWalletScreen() {
   // ─── Step: generate / confirm ───────────────────────────────────────────────
   if (step === "generate") {
     const isSolana = isAddingAccount && accountType === "solana";
+    const isDynamic = isAddingAccount && accountType === "dynamic";
 
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: bg }]}>
@@ -194,36 +253,42 @@ export default function CreateWalletScreen() {
           >
             <Ionicons name="arrow-back" size={24} color={textPrimary} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: textPrimary }]}> 
+          <Text style={[styles.headerTitle, { color: textPrimary }]}>
             {isAddingAccount ? "Add Account" : "Create Wallet"}
           </Text>
           <View style={{ width: 24 }} />
         </View>
 
         <View style={styles.content}>
-          <View style={[styles.iconContainer, { backgroundColor: cardBg }]}> 
+          <View style={[styles.iconContainer, { backgroundColor: cardBg }]}>
             <Ionicons
               name={
-                isSolana
+                isDynamic
+                  ? "shield-checkmark-outline"
+                  : isSolana
                   ? "sunny-outline"
                   : isAddingAccount
                   ? "person-add-outline"
                   : "key-outline"
               }
               size={64}
-              color={isSolana ? "#9945FF" : accentColor}
+              color={isDynamic ? "#F5841F" : isSolana ? "#9945FF" : accentColor}
             />
           </View>
 
-          <Text style={[styles.title, { color: textPrimary }]}> 
-            {isSolana
+          <Text style={[styles.title, { color: textPrimary }]}>
+            {isDynamic
+              ? "Create Dynamic Wallet"
+              : isSolana
               ? "Create Solana Account"
               : isAddingAccount
               ? "Create EVM Account"
               : "Create New Wallet"}
           </Text>
-          <Text style={[styles.description, { color: textMuted }]}> 
-            {isSolana
+          <Text style={[styles.description, { color: textMuted }]}>
+            {isDynamic
+              ? "Sign in with email or social to create an MPC-secured Solana wallet. No seed phrase needed — Dynamic handles key management securely."
+              : isSolana
               ? "A new Solana keypair will be generated and stored securely on your device. Operations go through the API provider."
               : isAddingAccount
               ? "A new EVM account with a unique private key will be generated. This account will be independent from your other accounts."
@@ -241,15 +306,16 @@ export default function CreateWalletScreen() {
           )}
 
           {isAddingAccount && (
-            <View style={[styles.warningBox, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: isLight ? "#DCE8E2" : "transparent" }, isSolana && styles.warningBoxSolana]}>
+            <View style={[styles.warningBox, { backgroundColor: cardBg, borderWidth: isLight ? 1 : 0, borderColor: isLight ? "#DCE8E2" : "transparent" }, isSolana && styles.warningBoxSolana, isDynamic && styles.warningBoxDynamic]}>
               <Ionicons
                 name="information-circle-outline"
                 size={24}
-                color={isSolana ? "#9945FF" : accentColor}
+                color={isDynamic ? "#F5841F" : isSolana ? "#9945FF" : accentColor}
               />
-              <Text style={[styles.warningText, { color: strongMuted }]}> 
-                The new account will be automatically added to your wallet and
-                you can switch between accounts anytime.
+              <Text style={[styles.warningText, { color: strongMuted }]}>
+                {isDynamic
+                  ? "Dynamic uses MPC key management — your wallet is secured without exposing a private key. You'll sign in via the Dynamic flow."
+                  : "The new account will be automatically added to your wallet and you can switch between accounts anytime."}
               </Text>
             </View>
           )}
@@ -258,7 +324,9 @@ export default function CreateWalletScreen() {
         <View style={styles.footer}>
           <Button
             title={
-              isSolana
+              isDynamic
+                ? "Sign In with Dynamic"
+                : isSolana
                 ? "Create Solana Account"
                 : isAddingAccount
                 ? "Create EVM Account"
@@ -407,6 +475,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#9945FF30",
   },
+  warningBoxDynamic: {
+    borderWidth: 1,
+    borderColor: "#F5841F30",
+  },
   warningText: {
     flex: 1,
     color: "#D1D5DB",
@@ -430,6 +502,18 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "transparent",
     position: "relative",
+  },
+  typeCardWide: {
+    width: "100%",
+    backgroundColor: "#1E2E29",
+    borderRadius: 16,
+    padding: 20,
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 2,
+    borderColor: "transparent",
+    position: "relative",
+    marginTop: 12,
   },
   typeCardSelected: {
     borderColor: "#569F8C",

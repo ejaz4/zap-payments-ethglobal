@@ -9,7 +9,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-export type ProviderType = "evm" | "api";
+export type ProviderType = "evm" | "api" | "dynamic";
 
 interface ProviderState {
   providerType: ProviderType;
@@ -25,6 +25,8 @@ interface ProviderState {
   selectedApiNetworkId: string | null;
   isLoadingApiNetworks: boolean;
   apiNetworksError: string | null;
+  /** The currently active Dynamic SVM network (e.g. "sol-mainnet", "sol-devnet"). */
+  selectedDynamicNetworkId: string | null;
 }
 
 interface ProviderActions {
@@ -42,6 +44,8 @@ interface ProviderActions {
   getActiveNetworkLabel: (evmChainName: string) => string;
   /** Returns the resolved API base URL (stored value, or env var fallback). */
   getApiBaseUrl: () => string;
+  /** Set the active Dynamic SVM network. */
+  setSelectedDynamicNetworkId: (networkId: string) => void;
 }
 
 const ENV_API_URL = (process.env["EXPO_PUBLIC_API_URL"] as string | undefined) ?? "";
@@ -53,6 +57,7 @@ const initialState: ProviderState = {
   selectedApiNetworkId: null,
   isLoadingApiNetworks: false,
   apiNetworksError: null,
+  selectedDynamicNetworkId: "sol-mainnet",
 };
 
 export const useProviderStore = create<ProviderState & ProviderActions>()(
@@ -114,8 +119,16 @@ export const useProviderStore = create<ProviderState & ProviderActions>()(
         );
       },
 
+      setSelectedDynamicNetworkId: (networkId) => {
+        set({ selectedDynamicNetworkId: networkId });
+      },
+
       getActiveNetworkLabel: (evmChainName) => {
         const { providerType } = get();
+        if (providerType === "dynamic") {
+          const nid = get().selectedDynamicNetworkId ?? "sol-mainnet";
+          return nid === "sol-devnet" ? "Solana Devnet" : "Solana";
+        }
         if (providerType === "api") {
           const network = get().getSelectedApiNetwork();
           return network?.displayName ?? "API";
@@ -130,6 +143,7 @@ export const useProviderStore = create<ProviderState & ProviderActions>()(
         providerType: state.providerType,
         apiBaseUrl: state.apiBaseUrl,
         selectedApiNetworkId: state.selectedApiNetworkId,
+        selectedDynamicNetworkId: state.selectedDynamicNetworkId,
       }),
     },
   ),
@@ -150,3 +164,9 @@ export const useApiNetworks = () =>
 
 export const useIsApiMode = () =>
   useProviderStore((s) => s.providerType === "api");
+
+export const useIsDynamicMode = () =>
+  useProviderStore((s) => s.providerType === "dynamic");
+
+export const useSelectedDynamicNetworkId = () =>
+  useProviderStore((s) => s.selectedDynamicNetworkId);

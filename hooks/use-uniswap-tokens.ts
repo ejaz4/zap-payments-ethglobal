@@ -11,10 +11,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const UNISWAP_GQL_URL = "https://interface.gateway.uniswap.org/v1/graphql";
 
-/** Map app ChainId to Uniswap GraphQL Chain enum */
+/** Map app ChainId to Uniswap GraphQL Chain enum.
+ *  Testnets (Sepolia, etc.) are intentionally excluded — the Uniswap GQL API
+ *  only has mainnet data, so querying "ETHEREUM" for Sepolia returns mainnet
+ *  addresses that don't exist on the testnet. */
 const CHAIN_NAME_MAP: Partial<Record<ChainId, string>> = {
   [ChainId.mainnet]: "ETHEREUM",
-  [ChainId.sepolia]: "ETHEREUM",
   [ChainId.polygon]: "POLYGON",
   [ChainId.arbitrum]: "ARBITRUM",
   [ChainId.optimism]: "OPTIMISM",

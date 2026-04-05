@@ -26,9 +26,13 @@
 
 export type { CryptoProvider } from "./provider/base";
 export { ApiProvider } from "./provider/api";
+export { DynamicProvider } from "./provider/dynamic";
 export { EvmProvider } from "./provider/evm";
 
+export { dynamicClient } from "./dynamic/client";
+
 export type { CryptoUser } from "./user/base";
+export { DynamicUser } from "./user/dynamic";
 export { ENSUser } from "./user/ens";
 export { EvmUser } from "./user/evm";
 export { LedgerUser } from "./user/ledger";
@@ -66,15 +70,17 @@ export type {
 
 import { ApiProvider } from "./provider/api";
 import { CryptoProvider } from "./provider/base";
+import { DynamicProvider } from "./provider/dynamic";
 import { EvmProvider } from "./provider/evm";
 import { CryptoUser } from "./user/base";
+import { DynamicUser } from "./user/dynamic";
 import { ENSUser } from "./user/ens";
 import { EvmUser } from "./user/evm";
 import { LedgerUser } from "./user/ledger";
 import { PrivyUser } from "./user/privy";
 
-export type ProviderType = "evm" | "api";
-export type UserType = "evm" | "ens" | "privy" | "ledger";
+export type ProviderType = "evm" | "api" | "dynamic";
+export type UserType = "evm" | "ens" | "privy" | "ledger" | "dynamic";
 
 /**
  * Create a CryptoProvider by type.
@@ -91,6 +97,8 @@ export function createProvider(
       return new EvmProvider();
     case "api":
       return new ApiProvider(baseUrl);
+    case "dynamic":
+      return new DynamicProvider();
     default:
       throw new Error(`[crypto] Unknown provider type: ${type}`);
   }
@@ -122,6 +130,8 @@ export function createUser(
         opts?.transport ?? null,
         opts?.derivationPath,
       );
+    case "dynamic":
+      return new DynamicUser(address);
     default:
       throw new Error(`[crypto] Unknown user type: ${type}`);
   }

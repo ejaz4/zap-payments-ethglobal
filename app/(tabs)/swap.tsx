@@ -1,8 +1,10 @@
 import { ChainId, DEFAULT_NETWORKS, EthersClient } from "@/app/profiles/client";
+import { NetworkSelector } from "@/components/ui/NetworkSelector";
 import { getAllDefaultTokens, getTokenKey } from "@/config/tokens";
 import {
     NATIVE_TOKEN_ADDRESS,
     SLIPPAGE_PRESETS,
+    UNISWAP_CHAINS,
     isUniswapSupported,
 } from "@/config/uniswap";
 import { usePrices, useTokenPrice } from "@/hooks/use-prices";
@@ -150,14 +152,26 @@ export default function SwapScreen() {
   const bg = tintedBackground("#000000");
   const currency = useSelectedCurrency();
   const selectedAccount = useSelectedAccount();
-  const selectedChainId = useWalletStore((s) => s.selectedChainId);
+  const globalChainId = useWalletStore((s) => s.selectedChainId);
   const allNativeBalances = useWalletStore((s) => s.nativeBalances);
   const allTokenBalances = useWalletStore((s) => s.tokenBalances);
   const favoriteTokens = useTokenStore((s) => s.favoriteTokens);
   const addCustomToken = useTokenStore((s) => s.addCustomToken);
   const hasToken = useTokenStore((s) => s.hasToken);
+  const getTokensForChain = useTokenStore((s) => s.getTokensForChain);
   const slippage = useUniswapStore((s) => s.slippage);
   const setSlippage = useUniswapStore((s) => s.setSlippage);
+
+  // Local chain state — defaults to global, but can be changed independently
+  const [selectedChainId, setSelectedChainId] = useState<ChainId>(globalChainId);
+  const [showChainPicker, setShowChainPicker] = useState(false);
+
+  // Sync when global chain changes (e.g. user switches in another tab)
+  useEffect(() => {
+    if (isUniswapSupported(globalChainId)) {
+      setSelectedChainId(globalChainId);
+    }
+  }, [globalChainId]);
 
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
@@ -170,6 +184,8 @@ export default function SwapScreen() {
   const accentBorder = hexToRgba(accentColor, 0.38);
 
   const chainSupportsSwap = isUniswapSupported(selectedChainId);
+  const chainConfig = UNISWAP_CHAINS[selectedChainId];
+  const chainName = chainConfig?.name ?? EthersClient.getNetworkConfig(selectedChainId)?.name ?? "Unknown";
   const { tokens: uniswapTokenList, loading: uniswapSearchLoading, search: searchUniswapTokens } = useUniswapTokens(selectedChainId);
 
   const defaultColorByKey = useMemo(() => {
@@ -274,15 +290,47 @@ export default function SwapScreen() {
     [currencies],
   );
 
-  // Merge Uniswap token list into the "to" picker — tokens user doesn't already hold
+  // Internal token list for the current chain (always available, even without Uniswap GQL)
+  const internalTokens = useMemo(() => getTokensForChain(selectedChainId), [getTokensForChain, selectedChainId]);
+
+  // Merge internal token list + Uniswap GQL results into the "to" picker.
+  // Tokens the user already holds (in `currencies`) are excluded.
   const uniswapExtras = useMemo<CurrencyItem[]>(() => {
     const existingAddrs = new Set(
       currencies.map((c) => (c.address || c.swapAddress).toLowerCase()),
     );
-    return uniswapTokenList
-      .filter((t) => !existingAddrs.has(t.address.toLowerCase()))
-      .map((t) => ({
-        id: `uniswap_${t.chainId}_${t.address.toLowerCase()}`,
+    const extras: CurrencyItem[] = [];
+    const seenAddrs = new Set<string>();
+
+    // First: add internal tokens for this chain (verified, correct addresses)
+    for (const t of internalTokens) {
+      const addrLower = t.address.toLowerCase();
+      if (existingAddrs.has(addrLower) || seenAddrs.has(addrLower)) continue;
+      seenAddrs.add(addrLower);
+      const favoriteKey = getTokenKey(t.address, t.chainId);
+      extras.push({
+        id: `internal_${t.chainId}_${addrLower}`,
+        symbol: t.symbol,
+        name: t.name,
+        amount: 0,
+        amountFormatted: "0",
+        chainId: t.chainId,
+        address: t.address,
+        swapAddress: t.address,
+        decimals: t.decimals,
+        color: t.color || symbolColor(t.symbol),
+        isFavorite: favoriteTokens.has(favoriteKey),
+        popularity: popularityMap.get(t.symbol.toUpperCase()) || 5,
+      });
+    }
+
+    // Then: add Uniswap GQL results (only for chains that actually have GQL support)
+    for (const t of uniswapTokenList) {
+      const addrLower = t.address.toLowerCase();
+      if (existingAddrs.has(addrLower) || seenAddrs.has(addrLower)) continue;
+      seenAddrs.add(addrLower);
+      extras.push({
+        id: `uniswap_${t.chainId}_${addrLower}`,
         symbol: t.symbol,
         name: t.name,
         amount: 0,
@@ -295,8 +343,11 @@ export default function SwapScreen() {
         isFavorite: false,
         popularity: popularityMap.get(t.symbol.toUpperCase()) || 0,
         logoURI: t.logoURI,
-      }));
-  }, [currencies, uniswapTokenList, popularityMap]);
+      });
+    }
+
+    return extras;
+  }, [currencies, internalTokens, uniswapTokenList, popularityMap, favoriteTokens, selectedChainId]);
 
   // Combined list for the "to" picker: user's tokens first, then Uniswap extras sorted by popularity
   const toPickerList = useMemo(
@@ -499,9 +550,16 @@ export default function SwapScreen() {
       <View style={[styles.content, { paddingTop: insets.top + 12 }]}>
         <View style={styles.headerRow}>
           <Text style={styles.headerTitle}>Swap</Text>
-          <TouchableOpacity onPress={() => setShowSettings(!showSettings)} style={styles.settingsBtn}>
-            <Ionicons name="settings-outline" size={20} color="#9CA3AF" />
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <TouchableOpacity onPress={() => setShowChainPicker(true)} style={styles.chainBtn}>
+              <View style={[styles.chainDot, { backgroundColor: chainSupportsSwap ? "#10B981" : "#F59E0B" }]} />
+              <Text style={styles.chainBtnText}>{chainName}</Text>
+              <Ionicons name="chevron-down" size={14} color="#9CA3AF" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSettings(!showSettings)} style={styles.settingsBtn}>
+              <Ionicons name="settings-outline" size={20} color="#9CA3AF" />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Slippage settings */}
@@ -634,6 +692,17 @@ export default function SwapScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Chain Picker */}
+      <NetworkSelector
+        visible={showChainPicker}
+        selectedChainId={selectedChainId}
+        onSelect={(chainId) => {
+          setSelectedChainId(chainId);
+          setShowChainPicker(false);
+        }}
+        onClose={() => setShowChainPicker(false)}
+      />
+
       {/* Token Picker Modal */}
       <Modal visible={pickerFor !== null} transparent animationType="slide" onRequestClose={() => setPickerFor(null)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setPickerFor(null)}>
@@ -718,6 +787,10 @@ const styles = StyleSheet.create({
   content: { flex: 1, paddingHorizontal: 16, paddingBottom: 90 },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
   headerTitle: { color: "#FFFFFF", fontSize: 24, fontWeight: "700" },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 4 },
+  chainBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#1D2822", borderRadius: 20, paddingVertical: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: "#2A3A31" },
+  chainDot: { width: 8, height: 8, borderRadius: 4 },
+  chainBtnText: { color: "#D1D5DB", fontSize: 13, fontWeight: "600" },
   settingsBtn: { padding: 8 },
   settingsPanel: { backgroundColor: "#141B17", borderWidth: 1, borderColor: "#1F2A24", borderRadius: 14, padding: 14, marginBottom: 12 },
   settingsLabel: { color: "#9CA3AF", fontSize: 12, fontWeight: "600", marginBottom: 8 },

@@ -153,6 +153,19 @@ export default function NfcScanScreen() {
           ...(payment.tokenAddress ? { tokenAddress: payment.tokenAddress } : {}),
         },
       } as any);
+    } else if (payment.type === "receive-anything") {
+      // Receiver accepts any token — show send-anything screen
+      router.push({
+        pathname: "/send/send-anything",
+        params: {
+          address: payment.address,
+          chainId: payment.chainId.toString(),
+          amount: payment.amount ?? "",
+          settleTokenAddress: payment.settleTokenAddress ?? "",
+          settleTokenSymbol: payment.settleTokenSymbol ?? "",
+          settleTokenDecimals: (payment.settleTokenDecimals ?? 18).toString(),
+        },
+      } as any);
     } else {
       // Smart contract terminal — amount lives in the contract.
       // Pass autopay params so payment.tsx can fire immediately once loaded.

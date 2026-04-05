@@ -49,7 +49,7 @@ export function useTxStatusPoller() {
     for (const tx of solanaPending) {
       // Determine networkId from the account that sent this tx
       const account = store.accounts.find(
-        (a) => a.address === tx.from && a.accountType === "solana",
+        (a) => a.address === tx.from && (a.accountType === "solana" || a.accountType === "dynamic"),
       );
       if (!account) continue;
 

@@ -1,4 +1,5 @@
 import { EthersClient } from "@/app/profiles/client";
+import { isUniswapSupported } from "@/config/uniswap";
 import { useAccentColor } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
@@ -190,10 +191,10 @@ export default function ReceiveOptionsScreen() {
               delay={300}
             /> */}
 
-            {/* {isUniswapSupported(selectedChainId) && (
+            {isUniswapSupported(selectedChainId) && (
               <ReceiveOption
                 icon="storefront-outline"
-                title="Merchant Receive"
+                title="Receive Anything"
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   router.push("/receive/merchant-receive" as any);
@@ -201,7 +202,7 @@ export default function ReceiveOptionsScreen() {
                 iconColor="#FF007A"
                 delay={400}
               />
-            )} */}
+            )}
 
             <ReceiveOption
               icon="radio-outline"
