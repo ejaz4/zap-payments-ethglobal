@@ -36,9 +36,12 @@ export function TransactionRow({
   const counterpartAddress = isSent ? transaction.to : transaction.from;
   const ensName = useENSName(counterpartAddress, transaction.chainId as ChainId);
 
+  const isSwap = transaction.type === "swap";
+
   const getIcon = () => {
     if (transaction.status === "pending") return "time-outline";
     if (transaction.status === "failed") return "close-circle-outline";
+    if (isSwap) return "swap-horizontal-outline";
 
     if (transaction.paymentMethod === "tap-to-pay") {
       return isReceived ? "receipt-outline" : "phone-portrait-outline";
@@ -52,6 +55,7 @@ export function TransactionRow({
   const getIconColor = () => {
     if (transaction.status === "pending") return "#F59E0B";
     if (transaction.status === "failed") return "#EF4444";
+    if (isSwap) return "#8B5CF6";
     if (isSent) return "#EF4444";
     if (isReceived) return "#10B981";
     return "#6B7280";
@@ -72,6 +76,10 @@ export function TransactionRow({
   };
 
   const getSubtitle = () => {
+    if (isSwap && transaction.swapFromSymbol && transaction.swapToSymbol) {
+      return `${transaction.swapFromSymbol} → ${transaction.swapToSymbol}`;
+    }
+
     if (
       transaction.paymentMethod === "tap-to-pay" &&
       transaction.merchantName
@@ -129,16 +137,29 @@ export function TransactionRow({
       </View>
 
       <View style={styles.valueContainer}>
-        <Text
-          style={[
-            styles.value,
-            isSent ? styles.sentValue : styles.receivedValue,
-          ]}
-        >
-          {isSent ? "-" : "+"}
-          {formatValue(transaction.value)} {transaction.tokenSymbol || "ETH"}
-        </Text>
-        <Text style={styles.time}>{formatTime(transaction.timestamp)}</Text>
+        {isSwap && transaction.swapToAmount && transaction.swapToSymbol ? (
+          <>
+            <Text style={[styles.value, { color: "#10B981" }]}>
+              +{formatValue(transaction.swapToAmount)} {transaction.swapToSymbol}
+            </Text>
+            <Text style={styles.swapFromValue}>
+              -{formatValue(transaction.swapFromAmount || transaction.value)} {transaction.swapFromSymbol || transaction.tokenSymbol}
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text
+              style={[
+                styles.value,
+                isSent ? styles.sentValue : styles.receivedValue,
+              ]}
+            >
+              {isSent ? "-" : "+"}
+              {formatValue(transaction.value)} {transaction.tokenSymbol || "ETH"}
+            </Text>
+            <Text style={styles.time}>{formatTime(transaction.timestamp)}</Text>
+          </>
+        )}
       </View>
     </>
   );
@@ -210,6 +231,10 @@ const styles = StyleSheet.create({
   },
   receivedValue: {
     color: "#10B981",
+  },
+  swapFromValue: {
+    color: "#9CA3AF",
+    fontSize: 12,
   },
   time: {
     color: "#6B7280",

@@ -150,6 +150,7 @@ export default function NfcScanScreen() {
           address: payment.address,
           chainId: payment.chainId.toString(),
           ...(payment.amount ? { amount: payment.amount } : {}),
+          ...(payment.tokenAddress ? { tokenAddress: payment.tokenAddress } : {}),
         },
       } as any);
     } else {

@@ -1,5 +1,4 @@
 import { EthersClient } from "@/app/profiles/client";
-import { isUniswapSupported } from "@/config/uniswap";
 import { useAccentColor } from "@/store/appearance";
 import { useSelectedAccount, useWalletStore } from "@/store/wallet";
 import { useZapContractStore } from "@/store/zap-contract";
@@ -175,7 +174,7 @@ export default function ReceiveOptionsScreen() {
               delay={100}
             />
 
-            <ReceiveOption
+            {/* <ReceiveOption
               icon="receipt-outline"
               title="Payment Request"
               onPress={() => handleZapOptionPress("/receive/request")}
@@ -189,9 +188,9 @@ export default function ReceiveOptionsScreen() {
               onPress={() => handleZapOptionPress("/receive/terminal")}
               iconColor="#8B5CF6"
               delay={300}
-            />
+            /> */}
 
-            {isUniswapSupported(selectedChainId) && (
+            {/* {isUniswapSupported(selectedChainId) && (
               <ReceiveOption
                 icon="storefront-outline"
                 title="Merchant Receive"
@@ -202,7 +201,7 @@ export default function ReceiveOptionsScreen() {
                 iconColor="#FF007A"
                 delay={400}
               />
-            )}
+            )} */}
 
             <ReceiveOption
               icon="radio-outline"
@@ -212,7 +211,7 @@ export default function ReceiveOptionsScreen() {
                 router.push("/receive/zap-pay" as any);
               }}
               iconColor="#10B981"
-              delay={500}
+              delay={200}
             />
           </View>
         </View>

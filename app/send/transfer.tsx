@@ -194,6 +194,9 @@ export default function SendScreen() {
 
   useEffect(() => {
     if (!nfcRequestedAmount || !addressParam) return; // Only for NFC-initiated transfers
+    // Don't convert until auto-selection has resolved — otherwise we'd treat
+    // the amount as native currency before the correct token is selected.
+    if (!hasAutoSelected) return;
 
     // Check if the currently selected asset matches the NFC request denomination
     const isExactMatch = tokenAddress
@@ -239,7 +242,7 @@ export default function SendScreen() {
     };
 
     convert();
-  }, [selectedAsset, nfcRequestedAmount, addressParam, selectedChainId, tokenAddress, nfcRequestSymbol]);
+  }, [selectedAsset, nfcRequestedAmount, addressParam, selectedChainId, tokenAddress, nfcRequestSymbol, hasAutoSelected]);
 
   // Get available tokens with balances for the current chain
   const availableTokens = useMemo(() => {
@@ -699,7 +702,6 @@ export default function SendScreen() {
     step: swapSendStep,
     txHash: swapSendTxHash,
     error: swapSendError,
-    reset: resetSwapSend,
   } = useSwapExecution();
 
   const handleSwapAndSend = () => {
@@ -708,11 +710,83 @@ export default function SendScreen() {
     executeSwapSend(swapQuote, selectedAccount.address);
   };
 
-  // After swap-and-send completes, refresh balances
+  // After swap completes, record it and auto-trigger the send
   useEffect(() => {
-    if (swapSendStep === "done") {
+    if (swapSendStep === "done" && swapSendTxHash) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       BalanceService.forceRefreshBalances();
+
+      // Record swap in transaction history
+      if (selectedAccount) {
+        const swapTx = {
+          hash: swapSendTxHash,
+          from: selectedAccount.address,
+          to: selectedAccount.address,
+          value: swapQuote?.formattedIn || "0",
+          chainId: effectiveChainId,
+          timestamp: Date.now(),
+          status: "confirmed" as const,
+          type: "swap" as const,
+          tokenSymbol: swapFromSymbol,
+          swapFromSymbol,
+          swapFromAmount: swapQuote?.formattedIn || "0",
+          swapToSymbol: currentSymbol,
+          swapToAmount: swapQuote?.formattedOut || "0",
+        };
+        useWalletStore.getState().addTransaction(selectedAccount.address, swapTx);
+      }
+
+      // Auto-send after swap — no need for confirmation since the user already
+      // confirmed by tapping "Swap & Send"
+      const autoSend = async () => {
+        if (!selectedAccount || !resolvedAddress || !amount) return;
+
+        setIsLoading(true);
+        try {
+          const isToken = selectedAsset.type === "token";
+          let result;
+
+          if (isToken) {
+            result = await TransactionService.sendToken(
+              selectedAccount.address,
+              resolvedAddress,
+              selectedAsset.token.address,
+              amount,
+              selectedAsset.token.decimals,
+              effectiveChainId,
+              selectedAsset.token.symbol,
+            );
+          } else {
+            result = await TransactionService.sendNative(
+              selectedAccount.address,
+              resolvedAddress,
+              amount,
+              effectiveChainId,
+            );
+          }
+
+          if ("hash" in result) {
+            Alert.alert(
+              "Swap & Send Complete",
+              `Swapped ${swapQuote?.formattedIn || ""} ${swapFromSymbol} and sent ${amount} ${currentSymbol}.\n\nTx: ${result.hash.slice(0, 10)}...`,
+              [{ text: "OK", onPress: () => router.back() }],
+            );
+          } else {
+            Alert.alert("Send Failed", result.error);
+          }
+        } catch (error) {
+          console.error("Auto-send after swap error:", error);
+          Alert.alert(
+            "Send Failed",
+            "Swap completed but send failed. Your swapped tokens are in your wallet — try sending again.",
+          );
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      // Brief delay to let balance refresh propagate
+      setTimeout(autoSend, 1500);
     }
   }, [swapSendStep]);
 
@@ -939,10 +1013,10 @@ export default function SendScreen() {
             )}
 
             {swapSendStep === "done" && swapSendTxHash && (
-              <View style={styles.swapSendSuccessRow}>
-                <Ionicons name="checkmark-circle" size={16} color="#10B981" />
-                <Text style={styles.swapSendSuccessText}>
-                  Swap & Send complete! Tx: {swapSendTxHash.slice(0, 10)}...
+              <View style={styles.swapSendStatusRow}>
+                <ActivityIndicator size="small" color={accentColor} />
+                <Text style={styles.swapSendStatusText}>
+                  Swap done — sending {currentSymbol}...
                 </Text>
               </View>
             )}
@@ -981,23 +1055,21 @@ export default function SendScreen() {
               styles.swapSendButton,
               { backgroundColor: canSwapSend ? accentColor : "#374151" },
             ]}
-            onPress={swapSendStep === "done" ? () => resetSwapSend() : handleSwapAndSend}
-            disabled={!canSwapSend && swapSendStep !== "done"}
+            onPress={handleSwapAndSend}
+            disabled={!canSwapSend}
             activeOpacity={0.8}
           >
-            {isSwapping ? (
+            {isSwapping || swapSendStep === "done" || isLoading ? (
               <ActivityIndicator size="small" color="#FFF" />
             ) : (
               <>
                 <Ionicons
-                  name={swapSendStep === "done" ? "checkmark-circle" : "swap-horizontal"}
+                  name="swap-horizontal"
                   size={18}
                   color="#FFF"
                 />
                 <Text style={styles.swapSendButtonText}>
-                  {swapSendStep === "done"
-                    ? "Done!"
-                    : swapQuoteLoading
+                  {swapQuoteLoading
                     ? "Getting quote..."
                     : swapQuote
                     ? `Swap & Send ${currentSymbol}`

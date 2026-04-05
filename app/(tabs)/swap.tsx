@@ -326,8 +326,8 @@ export default function SwapScreen() {
 
   useEffect(() => {
     if (fromTokenId && !currencies.some((item) => item.id === fromTokenId)) setFromTokenId(byAmount[0]?.id || null);
-    if (toTokenId && !currencies.some((item) => item.id === toTokenId)) setToTokenId(byPopularity[0]?.id || null);
-  }, [fromTokenId, toTokenId, currencies, byAmount, byPopularity]);
+    if (toTokenId && !currencies.some((item) => item.id === toTokenId) && !uniswapExtras.some((item) => item.id === toTokenId)) setToTokenId(byPopularity[0]?.id || null);
+  }, [fromTokenId, toTokenId, currencies, uniswapExtras, byAmount, byPopularity]);
 
   const fromToken = useMemo(
     () => currencies.find((item) => item.id === fromTokenId) || byAmount[0] || null,
@@ -378,11 +378,31 @@ export default function SwapScreen() {
     executeSwap(uniQuote, selectedAccount.address);
   };
 
-  // After swap completes, refresh balances and auto-import the received token
+  // After swap completes, refresh balances, record in history, and auto-import the received token
   useEffect(() => {
     if (swapStep === "done") {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       BalanceService.forceRefreshBalances();
+
+      // Record swap in transaction history
+      if (selectedAccount && txHash) {
+        const swapTx = {
+          hash: txHash,
+          from: selectedAccount.address,
+          to: selectedAccount.address,
+          value: fromAmount || "0",
+          chainId: selectedChainId,
+          timestamp: Date.now(),
+          status: "confirmed" as const,
+          type: "swap" as const,
+          tokenSymbol: fromToken?.symbol || "ETH",
+          swapFromSymbol: fromToken?.symbol || "ETH",
+          swapFromAmount: fromAmount || "0",
+          swapToSymbol: toToken?.symbol || "",
+          swapToAmount: toAmount || "0",
+        };
+        useWalletStore.getState().addTransaction(selectedAccount.address, swapTx);
+      }
 
       // Auto-add "to" token to the app's token list if it's not already there
       if (toToken?.address && !hasToken(toToken.address, toToken.chainId)) {

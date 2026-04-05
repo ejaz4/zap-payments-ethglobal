@@ -22,6 +22,7 @@ import { useTokenPrice } from "@/hooks/use-prices";
 import { useSwapExecution } from "@/hooks/use-swap-execution";
 import { useUniswapQuote } from "@/hooks/use-uniswap-quote";
 import { PriceService } from "@/services/price";
+import { ApiProvider } from "@/crypto/provider/api";
 import { BalanceService } from "@/services/wallet";
 import { tintedBackground, useAccentColor } from "@/store/appearance";
 import { useSelectedCurrency } from "@/store/currency";
@@ -287,6 +288,7 @@ export default function ZapPayReceiveScreen() {
     return () => {
       stopBroadcasting();
       stopBalancePolling();
+      stopSolanaBalancePolling();
     };
   }, []);
 
@@ -313,10 +315,10 @@ export default function ZapPayReceiveScreen() {
   }, [erc20Transfer, isListeningForPayments]);
 
   // ---------------------------------------------------------------------------
-  // Native balance polling
+  // Native balance polling (EVM)
   // ---------------------------------------------------------------------------
   const startBalancePolling = useCallback(async () => {
-    if (!selectedAccount || isSolanaAccount) return; // Solana polling not supported here
+    if (!selectedAccount || isSolanaAccount) return;
     try {
       initialBalanceRef.current = await EthersClient.getNativeBalance(
         selectedAccount.address,
@@ -353,6 +355,86 @@ export default function ZapPayReceiveScreen() {
       }
     }, 2000);
   }, [selectedAccount, selectedChainId, isSolanaAccount, nativeSymbol, networkConfig]);
+
+  // ---------------------------------------------------------------------------
+  // Solana balance polling (native SOL + SPL tokens)
+  // ---------------------------------------------------------------------------
+  const initialSolBalanceRef = useRef<string>("0");
+  const solanaPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startSolanaBalancePolling = useCallback(async () => {
+    if (!selectedAccount || !isSolanaAccount) return;
+    const networkId = selectedApiNetworkId ?? "dynamic-mainnet";
+    const apiBaseUrl = useProviderStore.getState().getApiBaseUrl();
+    if (!apiBaseUrl) return;
+
+    const provider = new ApiProvider(apiBaseUrl);
+    const isToken = selectedAsset.type === "token";
+    const tokenRef = isToken ? selectedAsset.token.address : undefined;
+
+    try {
+      if (isToken && tokenRef) {
+        const bal = await provider.getTokenBalance(selectedAccount.address, networkId, tokenRef);
+        initialSolBalanceRef.current = bal.amount;
+        console.log("[ZapPayReceive] Initial Solana token balance:", bal.amount, bal.symbol);
+      } else {
+        const bal = await provider.getNativeBalance(selectedAccount.address, networkId);
+        initialSolBalanceRef.current = bal.amount;
+        console.log("[ZapPayReceive] Initial SOL balance:", bal.amount);
+      }
+    } catch (e) {
+      console.warn("[ZapPayReceive] Failed to get initial Solana balance:", e);
+    }
+
+    solanaPollRef.current = setInterval(async () => {
+      try {
+        let currentAmount: string;
+        let currentSymbol: string;
+        let currentDecimals: number;
+
+        if (isToken && tokenRef) {
+          const bal = await provider.getTokenBalance(selectedAccount.address, networkId, tokenRef);
+          currentAmount = bal.amount;
+          currentSymbol = bal.symbol;
+          currentDecimals = bal.decimals;
+        } else {
+          const bal = await provider.getNativeBalance(selectedAccount.address, networkId);
+          currentAmount = bal.amount;
+          currentSymbol = bal.symbol;
+          currentDecimals = bal.decimals;
+        }
+
+        const initial = parseFloat(initialSolBalanceRef.current);
+        const current = parseFloat(currentAmount);
+        if (current > initial) {
+          const increase = current - initial;
+          // Use enough decimal places for the asset
+          const formatted = increase.toFixed(Math.min(currentDecimals, 9));
+          console.log("[ZapPayReceive] Solana balance increase:", formatted, currentSymbol);
+          setReceivedPayment({
+            type: isToken ? "token" : "native",
+            amount: formatted,
+            symbol: currentSymbol,
+            tokenAddress: tokenRef,
+            decimals: currentDecimals,
+          });
+          setStatus("received");
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Vibration.vibrate([0, 50, 50, 50]);
+          stopSolanaBalancePolling();
+        }
+      } catch {
+        // Transient API error — keep polling
+      }
+    }, 1000);
+  }, [selectedAccount, isSolanaAccount, selectedApiNetworkId, selectedAsset]);
+
+  const stopSolanaBalancePolling = useCallback(() => {
+    if (solanaPollRef.current) {
+      clearInterval(solanaPollRef.current);
+      solanaPollRef.current = null;
+    }
+  }, []);
 
   const stopBalancePolling = useCallback(() => {
     if (balancePollRef.current) {
@@ -536,7 +618,11 @@ export default function ZapPayReceiveScreen() {
       setErrorMessage(null);
 
       // Start listening for on-chain payments
-      startBalancePolling();
+      if (isSolanaAccount) {
+        startSolanaBalancePolling();
+      } else {
+        startBalancePolling();
+      }
     } catch (err: any) {
       console.error("[ZapPayReceive] Failed to start HCE:", err);
       setErrorMessage(err?.message ?? "Failed to start NFC broadcasting.");
@@ -547,6 +633,7 @@ export default function ZapPayReceiveScreen() {
   const handleStop = async () => {
     await stopBroadcasting();
     stopBalancePolling();
+    stopSolanaBalancePolling();
     setStatus("idle");
     setTapCount(0);
     setReceivedPayment(null);
@@ -563,6 +650,7 @@ export default function ZapPayReceiveScreen() {
   const handleDone = async () => {
     await stopBroadcasting();
     stopBalancePolling();
+    stopSolanaBalancePolling();
     router.back();
   };
 
